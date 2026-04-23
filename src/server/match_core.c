@@ -63,13 +63,27 @@ int request_ride(int rider_id, int rider_x, int rider_y) {
     // CRITICAL SECTION: Safe from double booking
     
     int matched_driver = -1;
+    int best_index = -1;
+    double min_dist = 9999999.0;
+
     for (int i = 0; i < MAX_DRIVERS; i++) {
         if (grid_shm->grid[i].status == STATUS_AVAILABLE) {
-             matched_driver = grid_shm->grid[i].driver_id;
-             grid_shm->grid[i].status = STATUS_ON_TRIP; // Mark as taken
-             printf("[MATCH] Success! Rider %d matched with Driver %d.\n", rider_id, matched_driver);
-             break;
+             long long dx = (long long)grid_shm->grid[i].current_loc.x - (long long)rider_x;
+             long long dy = (long long)grid_shm->grid[i].current_loc.y - (long long)rider_y;
+             double dist = (double)(dx * dx) + (double)(dy * dy); // Squared geographical distance
+
+             if (dist < min_dist) {
+                 min_dist = dist;
+                 best_index = i;
+                 matched_driver = grid_shm->grid[i].driver_id;
+             }
         }
+    }
+
+    if (best_index != -1) {
+        grid_shm->grid[best_index].status = STATUS_ON_TRIP; // Mark closest driver as taken
+        printf("[MATCH] Success! Rider %d matched with mathematically closest Driver %d (Squared Dist: %.0f).\n", 
+                rider_id, matched_driver, min_dist);
     }
 
     pthread_mutex_unlock(&driver_mutex);
