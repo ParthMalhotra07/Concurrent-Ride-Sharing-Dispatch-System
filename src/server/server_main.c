@@ -159,12 +159,27 @@ void* handle_client(void* arg) {
                         printf("[SERVER] Driver %d is ON TRIP for 15 seconds...\n", driver_id);
                         sleep(15);
                         
-                        int fare = 50 + (rand() % 100);
-                        printf("[SERVER] Trip finished! Rider %d with Driver %d. Fare: %d\n", 
-                                current_user.user_id, driver_id, fare);
+                        int base_fare = 50 + (rand() % 100);
+                        
+                        // Read Surge Pricing from TWO-WAY SHM
+                        double current_surge = 1.0;
+                        int surge_fd = shm_open(SURGE_SHM_NAME, O_RDONLY, 0666);
+                        if (surge_fd != -1) {
+                            SurgeState* surge_shm = mmap(NULL, sizeof(SurgeState), PROT_READ, MAP_SHARED, surge_fd, 0);
+                            if (surge_shm != MAP_FAILED) {
+                                current_surge = surge_shm->multiplier;
+                                munmap(surge_shm, sizeof(SurgeState));
+                            }
+                            close(surge_fd);
+                        }
+
+                        int final_fare = (int)(base_fare * current_surge);
+                        printf("[SERVER] Trip finished! Rider %d with Driver %d.\n", current_user.user_id, driver_id);
+                        printf("         Base Fare: %d | Surge: %.1fx | FINAL CHARGE: %d\n", 
+                                base_fare, current_surge, final_fare);
                         
                         // Demonstrating File Locking via ledger.c
-                        log_trip(current_user.user_id, driver_id, rx, ry, rx+5, ry+5, fare);
+                        log_trip(current_user.user_id, driver_id, rx, ry, rx+5, ry+5, final_fare);
 
                         // Reset driver to available after trip
                         update_driver_status(driver_id, STATUS_AVAILABLE, rx+5, ry+5);

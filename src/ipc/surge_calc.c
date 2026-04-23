@@ -22,6 +22,14 @@ int main() {
         return 1;
     }
 
+    // Initialize the two-way street for the Server
+    int surge_fd = shm_open(SURGE_SHM_NAME, O_CREAT | O_RDWR, 0666);
+    ftruncate(surge_fd, sizeof(SurgeState));
+    SurgeState* surge_shm = mmap(NULL, sizeof(SurgeState), PROT_READ | PROT_WRITE, MAP_SHARED, surge_fd, 0);
+    if (surge_shm != MAP_FAILED) {
+        surge_shm->multiplier = 1.0;
+    }
+
     while (1) {
         int available_drivers = 0;
         int on_trip_drivers = 0;
@@ -44,6 +52,11 @@ int main() {
             surge_multiplier = 1.5; // Low supply
         } else {
             surge_multiplier = 1.0; // Normal
+        }
+
+        // Write to Shared Memory for the Server to see!
+        if (surge_shm != MAP_FAILED) {
+            surge_shm->multiplier = (double)surge_multiplier;
         }
 
         // Use standard clear screen for a dashboard feel

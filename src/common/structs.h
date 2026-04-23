@@ -73,9 +73,16 @@ typedef struct {
     Location current_loc;
 } SharedDriverState;
 
+#define SURGE_SHM_NAME "/surge_multiplier_shm"
+
 // Layout in the SHM segment:
 typedef struct {
     SharedDriverState grid[MAX_DRIVERS]; 
 } SystemGridMap;
+
+// 5. Surge Pricing Communication
+typedef struct {
+    double multiplier;
+} SurgeState;
 
 #endif
