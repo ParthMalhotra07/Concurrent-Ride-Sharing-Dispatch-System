@@ -71,16 +71,16 @@ int main() {
 
             switch (choice) {
                 case 1: {
-                    int x, y;
-                    printf("Enter Your Location X Y: ");
-                    if (scanf("%d %d", &x, &y) != 2) {
-                        printf("Invalid input! Please enter numbers only.\n");
+                    int sx, sy, dx, dy;
+                    printf("Enter Your Start Location (X Y) and Drop-off Location (X Y) [e.g. 10 20 40 50]: ");
+                    if (scanf("%d %d %d %d", &sx, &sy, &dx, &dy) != 4) {
+                        printf("Invalid input! Please enter four numbers.\n");
                         int c; while ((c = getchar()) != '\n' && c != EOF); // Clear bad buffer
                         break;
                     }
                     packet.type = MSG_RIDE_REQ;
-                    sprintf(packet.payload, "%d %d", x, y);
-                    printf("Searching for drivers...\n");
+                    sprintf(packet.payload, "%d %d %d %d", sx, sy, dx, dy);
+                    printf("Searching for drivers to take you to (%d, %d)...\n", dx, dy);
                     send(sock, &packet, sizeof(packet), 0);
                     
                     // Wait for server response!

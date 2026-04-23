@@ -147,21 +147,32 @@ void* handle_client(void* arg) {
                 }
             }
             else if (packet.type == MSG_RIDE_REQ && current_user.role == ROLE_RIDER) {
-                int rx, ry;
-                if (sscanf(packet.payload, "%d %d", &rx, &ry) == 2) {
-                    int driver_id = request_ride(current_user.user_id, rx, ry);
+                int sx, sy, dx, dy;
+                // Parse the 4 geographic inputs from Rider
+                if (sscanf(packet.payload, "%d %d %d %d", &sx, &sy, &dx, &dy) == 4) {
+                    // Match driver based on Start Location (sx, sy)
+                    int driver_id = request_ride(current_user.user_id, sx, sy);
+                    
                     if (driver_id != -1) {
                         packet.type = MSG_RIDE_MATCHED;
                         sprintf(packet.payload, "%d", driver_id);
                         send(client_sock, &packet, sizeof(MessagePacket), 0);
                         
-                        // Simulate a longer trip so the Surge Calculator captures it!
-                        printf("[SERVER] Driver %d is ON TRIP for 15 seconds...\n", driver_id);
+                        // Simulate a longer trip
+                        printf("[SERVER] Driver %d is taking Rider %d from (%d,%d) to (%d,%d)...\n", 
+                                driver_id, current_user.user_id, sx, sy, dx, dy);
                         sleep(15);
                         
-                        int base_fare = 50 + (rand() % 100);
+                        // 1. Calculate REALISTIC Base Fare (Manhattan Distance)
+                        // Distance = |x2 - x1| + |y2 - y1|
+                        int dist_x = abs(dx - sx);
+                        int dist_y = abs(dy - sy);
+                        int distance_blocks = dist_x + dist_y;
                         
-                        // Read Surge Pricing from TWO-WAY SHM
+                        // $15 base pickup + $5 per block of distance
+                        int base_fare = 15 + (distance_blocks * 5);
+                        
+                        // 2. Read Surge Pricing from TWO-WAY SHM
                         double current_surge = 1.0;
                         int surge_fd = shm_open(SURGE_SHM_NAME, O_RDONLY, 0666);
                         if (surge_fd != -1) {
@@ -174,16 +185,17 @@ void* handle_client(void* arg) {
                         }
 
                         int final_fare = (int)(base_fare * current_surge);
-                        printf("[SERVER] Trip finished! Rider %d with Driver %d.\n", current_user.user_id, driver_id);
-                        printf("         Base Fare: %d | Surge: %.1fx | FINAL CHARGE: %d\n", 
-                                base_fare, current_surge, final_fare);
+                        printf("[SERVER] Trip finished! Rider %d reached destination.\n", current_user.user_id);
+                        printf("         Distance: %d blocks | Base: $%d | Surge: %.1fx | FINAL CHARGE: $%d\n", 
+                                distance_blocks, base_fare, current_surge, final_fare);
                         
-                        // Demonstrating File Locking via ledger.c
-                        log_trip(current_user.user_id, driver_id, rx, ry, rx+5, ry+5, final_fare);
+                        // Write exact geographic trip to ledger
+                        log_trip(current_user.user_id, driver_id, sx, sy, dx, dy, final_fare);
 
-                        // Reset driver to available after trip
-                        update_driver_status(driver_id, STATUS_AVAILABLE, rx+5, ry+5);
-                        printf("[SERVER] Driver %d is AVAILABLE again.\n", driver_id);
+                        // Reset driver to available at the NEW DROP-OFF location
+                        update_driver_status(driver_id, STATUS_AVAILABLE, dx, dy);
+                        printf("[SERVER] Driver %d is AVAILABLE again at new location (%d,%d).\n", 
+                                driver_id, dx, dy);
                     } else {
                         packet.type = MSG_ERROR;
                         strcpy(packet.payload, "No drivers available near your location.");
