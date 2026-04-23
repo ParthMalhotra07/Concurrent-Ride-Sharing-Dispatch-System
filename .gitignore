@@ -1,0 +1,18 @@
+# Compiled application binaries
+bin/
+*.o
+*.out
+
+# Test logs
+.test_logs/
+*.log
+
+# OS/IDE generated files
+.DS_Store
+.vscode/
+.idea/
+
+# (Optional) You can uncomment these if you don't want to push the user database 
+# and ledger history to github, although usually helpful for a grader!
+# data/ledger.txt
+# data/users.dat
