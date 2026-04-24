@@ -57,12 +57,11 @@ int main() {
         while (1) {
             printf("\n--- RIDER MENU ---\n");
             printf("1. Request a Ride\n");
-            printf("2. Check Surge Pricing (Simulated)\n");
-            printf("3. Logout & Exit\n");
+            printf("2. Logout & Exit\n");
             printf("Choice: ");
             if (scanf("%d", &choice) != 1) break;
 
-            if (choice == 3) {
+            if (choice == 2) {
                 packet.type = MSG_DISCONNECT;
                 strcpy(packet.payload, "Bye");
                 send(sock, &packet, sizeof(packet), 0);
@@ -92,10 +91,6 @@ int main() {
                     }
                     break;
                 }
-                case 2:
-                    printf("\n[Surge Status] Consulting independent price auditor...\n");
-                    printf("(Note: Check the surge_calc terminal for real-time rates!)\n");
-                    break;
                 default:
                     printf("Invalid choice.\n");
             }
