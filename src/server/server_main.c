@@ -181,11 +181,6 @@ void* handle_client(void* arg) {
                         
                         if (driver_id != -1) {
                             int driver_sock = user_sockets[driver_id];
-                            if (driver_sock == 0) {
-                                // Driver offline or ghosted
-                                update_driver_status(driver_id, STATUS_OFFLINE, 0, 0);
-                                continue;
-                            }
 
                             // Send Push Notification OFFER to Driver
                             packet.type = MSG_RIDE_OFFER;

@@ -16,7 +16,6 @@ void init_match_core(SystemGridMap* shm_ptr, sem_t* pool_sem) {
 }
 
 void update_driver_status(int driver_id, DriverStatus status, int x, int y) {
-    if (!grid_shm) return;
 
     pthread_mutex_lock(&driver_mutex);
     
@@ -37,11 +36,9 @@ void update_driver_status(int driver_id, DriverStatus status, int x, int y) {
         grid_shm->grid[driver_index].current_loc.x = x;
         grid_shm->grid[driver_index].current_loc.y = y;
 
-        // Manage semaphore if status changed regarding AVAILABILITY
+        // Update semaphore when driver becomes available
         if (old_status != STATUS_AVAILABLE && status == STATUS_AVAILABLE) {
             sem_post(driver_pool_sem);
-        } else if (old_status == STATUS_AVAILABLE && status != STATUS_AVAILABLE) {
-            sem_trywait(driver_pool_sem); // Consume one available slot silently
         }
     }
 
@@ -49,7 +46,6 @@ void update_driver_status(int driver_id, DriverStatus status, int x, int y) {
 }
 
 int request_ride(int rider_id, int rider_x, int rider_y, int* exclude_list, int exclude_count) {
-    if (!grid_shm) return -1;
 
     printf("[MATCH] Rider %d at (%d,%d) is requesting a ride...\n", rider_id, rider_x, rider_y);
 
