@@ -21,7 +21,6 @@
 //memory alignment and byte-offsets of the data flowing through Sockets and
 //Shared Memory
 
-// 1. Packet structure for Socket Communication
 typedef enum {
    //0
     MSG_AUTH_REQ, 
@@ -36,8 +35,14 @@ typedef enum {
     //5
     MSG_RIDE_END,
     //6
-    MSG_ERROR,
+    MSG_RIDE_OFFER,
     //7
+    MSG_RIDE_ACCEPT,
+    //8
+    MSG_RIDE_REJECT,
+    //9
+    MSG_ERROR,
+    //10
     MSG_DISCONNECT
 } MessageType;
 

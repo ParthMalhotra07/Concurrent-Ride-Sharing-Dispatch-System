@@ -22,6 +22,10 @@
 static SystemGridMap* grid_shm = NULL;
 static sem_t* driver_pool_sem = NULL;
 
+// Global Socket Mapping for Asynchronous Dispatch
+int user_sockets[2000] = {0};
+volatile int user_responses[2000] = {0}; // 0 = waiting, 1 = accept, 2 = reject
+
 void cleanup_and_exit(int sig) {
     (void)sig; // Silence unused warning
     printf("\n[SERVER] Shutting down. Cleaning up IPC resources...\n");
@@ -96,8 +100,18 @@ void* handle_client(void* arg) {
         int bytes_read = recv(client_sock, &packet, sizeof(MessagePacket), 0);
         if (bytes_read <= 0) {
             printf("[SERVER] Client on socket %d disconnected abruptly.\n", client_sock);
+            
+            // Vulnerability Fix: The Ghost Driver Cleanup
+            if (authenticated && current_user.role == ROLE_DRIVER) {
+                printf("[SERVER] Emergency Cleanup: Offlining Ghost Driver %d\n", current_user.user_id);
+                update_driver_status(current_user.user_id, STATUS_OFFLINE, 0, 0);
+            }
             break;
         }
+
+        // Vulnerability Fix: Malformed Packet Injection Prevention
+        // Force null-termination to prevent sscanf from reading out-of-bounds memory
+        packet.payload[sizeof(packet.payload) - 1] = '\0';
 
         if (packet.type == MSG_AUTH_REQ) {
             char username[32];
@@ -111,6 +125,7 @@ void* handle_client(void* arg) {
                         printf("[SERVER] Rejected banned user '%s'.\n", username);
                     } else {
                         authenticated = 1;
+                        user_sockets[current_user.user_id] = client_sock;
                         packet.type = MSG_AUTH_RES;
                         sprintf(packet.payload, "%d %d", current_user.user_id, current_user.role);
                         send(client_sock, &packet, sizeof(MessagePacket), 0);
@@ -133,6 +148,7 @@ void* handle_client(void* arg) {
         else {
             if (packet.type == MSG_DISCONNECT) {
                 printf("[SERVER] User ID %d cleanly disconnected.\n", current_user.user_id);
+                user_sockets[current_user.user_id] = 0;
                 if (current_user.role == ROLE_DRIVER) {
                     update_driver_status(current_user.user_id, STATUS_OFFLINE, 0, 0);
                 }
@@ -146,6 +162,14 @@ void* handle_client(void* arg) {
                             current_user.user_id, status, x, y);
                 }
             }
+            else if (packet.type == MSG_RIDE_ACCEPT && current_user.role == ROLE_DRIVER) {
+                user_responses[current_user.user_id] = 1;
+                printf("[SERVER] Driver %d ACCEPTED the ride.\n", current_user.user_id);
+            }
+            else if (packet.type == MSG_RIDE_REJECT && current_user.role == ROLE_DRIVER) {
+                user_responses[current_user.user_id] = 2;
+                printf("[SERVER] Driver %d REJECTED the ride.\n", current_user.user_id);
+            }
             else if (packet.type == MSG_RIDE_REQ && current_user.role == ROLE_RIDER) {
                 int sx, sy, dx, dy;
                 // Parse the 4 geographic inputs from Rider
@@ -154,48 +178,74 @@ void* handle_client(void* arg) {
                     int driver_id = request_ride(current_user.user_id, sx, sy);
                     
                     if (driver_id != -1) {
-                        packet.type = MSG_RIDE_MATCHED;
-                        sprintf(packet.payload, "%d", driver_id);
-                        send(client_sock, &packet, sizeof(MessagePacket), 0);
-                        
-                        // Simulate a longer trip
-                        printf("[SERVER] Driver %d is taking Rider %d from (%d,%d) to (%d,%d)...\n", 
-                                driver_id, current_user.user_id, sx, sy, dx, dy);
-                        sleep(15);
-                        
-                        // 1. Calculate REALISTIC Base Fare (Manhattan Distance)
-                        // Distance = |x2 - x1| + |y2 - y1|
-                        int dist_x = abs(dx - sx);
-                        int dist_y = abs(dy - sy);
-                        int distance_blocks = dist_x + dist_y;
-                        
-                        // $15 base pickup + $5 per block of distance
-                        int base_fare = 15 + (distance_blocks * 5);
-                        
-                        // 2. Read Surge Pricing from TWO-WAY SHM
-                        double current_surge = 1.0;
-                        int surge_fd = shm_open(SURGE_SHM_NAME, O_RDONLY, 0666);
-                        if (surge_fd != -1) {
-                            SurgeState* surge_shm = mmap(NULL, sizeof(SurgeState), PROT_READ, MAP_SHARED, surge_fd, 0);
-                            if (surge_shm != MAP_FAILED) {
-                                current_surge = surge_shm->multiplier;
-                                munmap(surge_shm, sizeof(SurgeState));
-                            }
-                            close(surge_fd);
+                        int driver_sock = user_sockets[driver_id];
+                        if (driver_sock == 0) {
+                            // Driver offline or ghosted
+                            packet.type = MSG_ERROR;
+                            strcpy(packet.payload, "Matched driver went offline. Try again.");
+                            send(client_sock, &packet, sizeof(MessagePacket), 0);
+                            update_driver_status(driver_id, STATUS_OFFLINE, 0, 0);
+                            continue;
                         }
 
-                        int final_fare = (int)(base_fare * current_surge);
-                        printf("[SERVER] Trip finished! Rider %d reached destination.\n", current_user.user_id);
-                        printf("         Distance: %d blocks | Base: $%d | Surge: %.1fx | FINAL CHARGE: $%d\n", 
-                                distance_blocks, base_fare, current_surge, final_fare);
-                        
-                        // Write exact geographic trip to ledger
-                        log_trip(current_user.user_id, driver_id, sx, sy, dx, dy, final_fare);
+                        // Send Push Notification OFFER to Driver
+                        packet.type = MSG_RIDE_OFFER;
+                        sprintf(packet.payload, "%d %d %d %d", sx, sy, dx, dy);
+                        user_responses[driver_id] = 0; // Reset response state
+                        send(driver_sock, &packet, sizeof(MessagePacket), 0);
+                        printf("[SERVER] Sent RIDE_OFFER to Driver %d. Waiting 10s for response...\n", driver_id);
 
-                        // Reset driver to available at the NEW DROP-OFF location
-                        update_driver_status(driver_id, STATUS_AVAILABLE, dx, dy);
-                        printf("[SERVER] Driver %d is AVAILABLE again at new location (%d,%d).\n", 
-                                driver_id, dx, dy);
+                        int wait_time = 0;
+                        while(user_responses[driver_id] == 0 && wait_time < 10) {
+                            sleep(1);
+                            wait_time++;
+                        }
+
+                        if (user_responses[driver_id] == 1) {
+                            // Driver ACCEPTED!
+                            packet.type = MSG_RIDE_MATCHED;
+                            sprintf(packet.payload, "%d", driver_id);
+                            send(client_sock, &packet, sizeof(MessagePacket), 0);
+                            
+                            printf("[SERVER] Driver %d ACCEPTED. Simulating trip from (%d,%d) to (%d,%d)...\n", 
+                                    driver_id, sx, sy, dx, dy);
+                            sleep(5); // Shorter simulated trip
+                            
+                            // 1. Calculate REALISTIC Base Fare (Manhattan Distance)
+                            int dist_x = abs(dx - sx);
+                            int dist_y = abs(dy - sy);
+                            int distance_blocks = dist_x + dist_y;
+                            int base_fare = 15 + (distance_blocks * 5);
+                            
+                            // 2. Read Surge Pricing from TWO-WAY SHM
+                            double current_surge = 1.0;
+                            int surge_fd = shm_open(SURGE_SHM_NAME, O_RDONLY, 0666);
+                            if (surge_fd != -1) {
+                                SurgeState* surge_shm = mmap(NULL, sizeof(SurgeState), PROT_READ, MAP_SHARED, surge_fd, 0);
+                                if (surge_shm != MAP_FAILED) {
+                                    current_surge = surge_shm->multiplier;
+                                    munmap(surge_shm, sizeof(SurgeState));
+                                }
+                                close(surge_fd);
+                            }
+
+                            int final_fare = (int)(base_fare * current_surge);
+                            printf("[SERVER] Trip finished! Rider %d reached destination.\n", current_user.user_id);
+                            printf("         Distance: %d blocks | Base: $%d | Surge: %.1fx | FINAL CHARGE: $%d\n", 
+                                    distance_blocks, base_fare, current_surge, final_fare);
+                            
+                            log_trip(current_user.user_id, driver_id, sx, sy, dx, dy, final_fare);
+                            update_driver_status(driver_id, STATUS_AVAILABLE, dx, dy);
+                        } else {
+                            // Driver REJECTED or TIMEOUT
+                            printf("[SERVER] Driver %d REJECTED or TIMEOUT.\n", driver_id);
+                            packet.type = MSG_ERROR;
+                            strcpy(packet.payload, "Driver rejected or timed out. Please request again.");
+                            send(client_sock, &packet, sizeof(MessagePacket), 0);
+                            
+                            // Put driver back in pool so they can be matched again (or go offline)
+                            update_driver_status(driver_id, STATUS_AVAILABLE, sx, sy);
+                        }
                     } else {
                         packet.type = MSG_ERROR;
                         strcpy(packet.payload, "No drivers available near your location.");
