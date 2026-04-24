@@ -109,10 +109,6 @@ void* handle_client(void* arg) {
             break;
         }
 
-        // Vulnerability Fix: Malformed Packet Injection Prevention
-        // Force null-termination to prevent sscanf from reading out-of-bounds memory
-        packet.payload[sizeof(packet.payload) - 1] = '\0';
-
         if (packet.type == MSG_AUTH_REQ) {
             char username[32];
             char password[64];
