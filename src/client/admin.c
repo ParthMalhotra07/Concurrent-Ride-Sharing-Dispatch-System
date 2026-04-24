@@ -58,11 +58,13 @@ int main() {
             printf("\n--- ADMIN DASHBOARD ---\n");
             printf("1. System Status Summary\n");
             printf("2. View Full Trip Ledger\n");
-            printf("3. Logout & Exit\n");
+            printf("3. Financial Summary\n");
+            printf("4. Manage User Access (Lock/Unlock)\n");
+            printf("5. Logout & Exit\n");
             printf("Choice: ");
             if (scanf("%d", &choice) != 1) break;
 
-            if (choice == 3) {
+            if (choice == 5) {
                 packet.type = MSG_DISCONNECT;
                 strcpy(packet.payload, "Bye");
                 send(sock, &packet, sizeof(packet), 0);
@@ -124,6 +126,52 @@ int main() {
                     lock.l_type = F_UNLCK;
                     fcntl(fd, F_SETLK, &lock);
                     fclose(fp);
+                    break;
+                }
+                case 4: {
+                    printf("\n--- MANAGE USER ACCESS ---\n");
+                    char target_user[32];
+                    int new_status;
+                    printf("Enter username to modify: ");
+                    scanf("%31s", target_user);
+                    printf("Set Status (0 = ACTIVE, 1 = LOCKED/BANNED): ");
+                    if (scanf("%d", &new_status) != 1) break;
+                    
+                    FILE *fp = fopen("data/users.dat", "r");
+                    FILE *ftemp = fopen("data/users_temp.dat", "w");
+                    if (!fp || !ftemp) {
+                        printf("Error accessing user database.\n");
+                        if(fp) fclose(fp); if(ftemp) fclose(ftemp);
+                        break;
+                    }
+                    
+                    char line[256];
+                    int found = 0;
+                    while (fgets(line, sizeof(line), fp)) {
+                        int id, role, banned;
+                        char uname[32], pword[64];
+                        if (sscanf(line, "%d %31s %63s %d %d", &id, uname, pword, &role, &banned) == 5) {
+                            if (strcmp(uname, target_user) == 0) {
+                                fprintf(ftemp, "%d %s %s %d %d\n", id, uname, pword, role, new_status);
+                                found = 1;
+                            } else {
+                                fputs(line, ftemp);
+                            }
+                        } else {
+                            fputs(line, ftemp);
+                        }
+                    }
+                    fclose(fp);
+                    fclose(ftemp);
+                    
+                    if (found) {
+                        remove("data/users.dat");
+                        rename("data/users_temp.dat", "data/users.dat");
+                        printf("Success: User '%s' status updated to %s.\n", target_user, new_status ? "LOCKED" : "ACTIVE");
+                    } else {
+                        remove("data/users_temp.dat");
+                        printf("Error: User '%s' not found.\n", target_user);
+                    }
                     break;
                 }
                 default:
