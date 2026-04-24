@@ -9,8 +9,8 @@ void init_match_core(SystemGridMap* shm_ptr, sem_t* pool_sem);
 // Update a driver's status and location
 void update_driver_status(int driver_id, DriverStatus status, int x, int y);
 
-// Attempt to match a rider with an available driver
+// Attempt to match a rider with the closest available driver not in the exclude list.
 // Returns driver_id if successful, -1 otherwise.
-int request_ride(int rider_id, int rider_x, int rider_y);
+int request_ride(int rider_id, int rider_x, int rider_y, int* exclude_list, int exclude_count);
 
 #endif

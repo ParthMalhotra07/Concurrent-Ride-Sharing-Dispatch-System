@@ -48,7 +48,7 @@ void update_driver_status(int driver_id, DriverStatus status, int x, int y) {
     pthread_mutex_unlock(&driver_mutex);
 }
 
-int request_ride(int rider_id, int rider_x, int rider_y) {
+int request_ride(int rider_id, int rider_x, int rider_y, int* exclude_list, int exclude_count) {
     if (!grid_shm) return -1;
 
     printf("[MATCH] Rider %d at (%d,%d) is requesting a ride...\n", rider_id, rider_x, rider_y);
@@ -68,6 +68,16 @@ int request_ride(int rider_id, int rider_x, int rider_y) {
 
     for (int i = 0; i < MAX_DRIVERS; i++) {
         if (grid_shm->grid[i].status == STATUS_AVAILABLE) {
+             // Check exclude list
+             int is_excluded = 0;
+             for (int j = 0; j < exclude_count; j++) {
+                 if (grid_shm->grid[i].driver_id == exclude_list[j]) {
+                     is_excluded = 1;
+                     break;
+                 }
+             }
+             if (is_excluded) continue;
+
              long long dx = (long long)grid_shm->grid[i].current_loc.x - (long long)rider_x;
              long long dy = (long long)grid_shm->grid[i].current_loc.y - (long long)rider_y;
              double dist = (double)(dx * dx) + (double)(dy * dy); // Squared geographical distance
