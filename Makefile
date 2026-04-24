@@ -20,6 +20,7 @@ all: dirs server driver rider admin surge_calc
 
 dirs:
 	mkdir -p $(BIN_DIR) || type nul >> nul
+	mkdir -p data || type nul >> nul
 
 server: $(SERVER_SRC)/server_main.c $(SERVER_SRC)/auth.c $(SERVER_SRC)/ledger.c $(SERVER_SRC)/match_core.c
 	$(CC) $(CFLAGS) $^ -o $(SERVER_BIN) $(LDFLAGS)

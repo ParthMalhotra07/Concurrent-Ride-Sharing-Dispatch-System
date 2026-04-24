@@ -26,6 +26,9 @@ static sem_t* driver_pool_sem = NULL;
 int user_sockets[2000] = {0};
 volatile int user_responses[2000] = {0}; // 0 = waiting, 1 = accept, 2 = reject
 
+// This function is triggered when we press Ctrl+C. It's important because it 
+// properly removes the shared memory and semaphores from the system so 
+// the OS doesn't get cluttered with stale resources.
 void cleanup_and_exit(int sig) {
     (void)sig; // Silence unused warning
     printf("\n[SERVER] Shutting down. Cleaning up IPC resources...\n");
@@ -120,7 +123,8 @@ void* handle_client(void* arg) {
                         send(client_sock, &packet, sizeof(MessagePacket), 0);
                         printf("[SERVER] Rejected banned user '%s'.\n", username);
                     } else if (user_sockets[current_user.user_id] != 0) {
-                        // Session already active — reject duplicate login
+                        // We check if this user is already logged in elsewhere.
+                        // This prevents multiple people using the same account simultaneously.
                         packet.type = MSG_ERROR;
                         strcpy(packet.payload, "Already logged in from another session.");
                         send(client_sock, &packet, sizeof(MessagePacket), 0);
@@ -181,6 +185,8 @@ void* handle_client(void* arg) {
                     int exclude_count = 0;
                     int trip_started = 0;
 
+                    // This is the matching loop. We keep searching for the nearest driver, 
+                    // and if they reject or don't respond, we try the next one until a match is made.
                     while (!trip_started) {
                         // Match driver based on Start Location (sx, sy)
                         int driver_id = request_ride(current_user.user_id, sx, sy, exclude_list, exclude_count);
@@ -266,6 +272,7 @@ int main() {
 
     setup_ipc();
 
+    // Standard TCP socket setup: create, bind to port 8080, and start listening for connections.
     int server_sock;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);

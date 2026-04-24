@@ -12,13 +12,11 @@ int authenticate_user(const char* username, const char* password, UserRecord* ou
     }
 
     char line[256];
-    //my authenticate fn works in O(n) time complexity right now 
-    //can be improved but would work fine for current model 
-
+    // We loop through the users file line by line to find a matching username 
+    // and password. It's a simple flat-file database approach.
     while (fgets(line, sizeof(line), fp)) {
         UserRecord temp;
-        // Parse: id username password role is_banned
-        // We use %d %31s %63s %d %d
+        // The file format is: ID USERNAME PASSWORD ROLE BANNED_STATUS
         int role_int;
         if (sscanf(line, "%d %31s %63s %d %d", 
                 &temp.user_id, temp.username, temp.password, 

@@ -73,6 +73,8 @@ int main() {
 
             switch (choice) {
                 case 1: {
+                    // We access the global driver grid directly through Shared Memory.
+                    // This is faster than network sockets because it avoids kernel overhead.
                     printf("\n[System View] Fetching Live Grid from Shared Memory...\n");
                     int shm_fd = shm_open(SHM_NAME, O_RDONLY, 0666);
                     if (shm_fd == -1) {
@@ -128,7 +130,46 @@ int main() {
                     fclose(fp);
                     break;
                 }
+                case 3: {
+                    FILE *fp = fopen("data/ledger.txt", "r");
+                    if (!fp) {
+                        printf("No financial data available.\n");
+                        break;
+                    }
+                    int fd = fileno(fp);
+                    struct flock lock;
+                    memset(&lock, 0, sizeof(lock));
+                    lock.l_type = F_RDLCK;
+                    lock.l_whence = SEEK_SET;
+                    lock.l_start = 0;
+                    lock.l_len = 0;
+                    fcntl(fd, F_SETLKW, &lock);
+
+                    long total_revenue = 0;
+                    int total_trips = 0;
+                    char line[256];
+                    while (fgets(line, sizeof(line), fp)) {
+                        int r_id, d_id, sx, sy, ex, ey, fare;
+                        if (sscanf(line, "TRIP %d %d %d %d %d %d %d", &r_id, &d_id, &sx, &sy, &ex, &ey, &fare) == 7) {
+                            total_revenue += fare;
+                            total_trips++;
+                        }
+                    }
+                    printf("\n--- SYSTEM FINANCIAL OVERVIEW ---\n");
+                    printf(" TOTAL TRIPS COMPLETED : %d\n", total_trips);
+                    printf(" TOTAL SYSTEM REVENUE  : $%ld\n", total_revenue);
+                    if (total_trips > 0)
+                        printf(" AVERAGE FARE PER TRIP : $%.2f\n", (double)total_revenue / total_trips);
+                    printf("----------------------------------\n");
+
+                    lock.l_type = F_UNLCK;
+                    fcntl(fd, F_SETLK, &lock);
+                    fclose(fp);
+                    break;
+                }
                 case 4: {
+                    // The Admin can modify user permissions live. This demonstrates 
+                    // how the system handles role-based access control.
                     printf("\n--- MANAGE USER ACCESS ---\n");
                     char target_user[32];
                     int new_status;
@@ -141,7 +182,8 @@ int main() {
                     FILE *ftemp = fopen("data/users_temp.dat", "w");
                     if (!fp || !ftemp) {
                         printf("Error accessing user database.\n");
-                        if(fp) fclose(fp); if(ftemp) fclose(ftemp);
+                        if (fp) fclose(fp); 
+                        if (ftemp) fclose(ftemp);
                         break;
                     }
                     

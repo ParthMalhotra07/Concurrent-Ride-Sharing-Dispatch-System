@@ -83,7 +83,7 @@ int main() {
                     printf("Searching for drivers to take you to (%d, %d)...\n", dx, dy);
                     send(sock, &packet, sizeof(packet), 0);
                     
-                    // Wait for server response!
+                    // We wait here for the server to find a driver and send back a match.
                     recv(sock, &res, sizeof(res), 0);
                     if (res.type == MSG_RIDE_MATCHED) {
                         printf("\n[MATCH FOUND!] Driver ID %s is on the way!\n", res.payload);
@@ -93,6 +93,8 @@ int main() {
                     break;
                 }
                 case 2: {
+                    // This function opens the shared ledger file to show the rider 
+                    // a list of all their successfully completed trips.
                     FILE *fp = fopen("data/ledger.txt", "r");
                     if (!fp) {
                         printf("No trip history available yet.\n");

@@ -1,2 +1,3 @@
 # Trip Ledger (Protected via fcntl)
 # Format: TripID RiderID DriverID StartX StartY EndX EndY Fare
+TRIP 3 2 0 0 0 0 37

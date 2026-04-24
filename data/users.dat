@@ -3,5 +3,5 @@ USER_ID USERNAME PASSWORD ROLE BANNED
 2 driver1 driverpass1 1 0
 3 rider1 riderpass1 0 0
 4 admin2 adminpass2 2 0
-5 driver2 driverpass2 1 0
+5 driver2 driverpass2 1 1
 6 rider2 riderpass2 0 0

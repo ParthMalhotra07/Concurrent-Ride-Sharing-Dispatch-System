@@ -10,6 +10,9 @@ int main() {
     printf("=== SURGE PRICING CALCULATOR ===\n");
     printf("Monitoring Shared Memory Grid...\n");
 
+    // This process doesn't talk to the server via sockets. 
+    // Instead, it "spies" on the shared memory grid to see how many drivers 
+    // are available and calculates the surge price accordingly.
     int shm_fd = shm_open(SHM_NAME, O_RDONLY, 0666);
     if (shm_fd == -1) {
         perror("shm_open failed! Is the server running?");
@@ -45,13 +48,15 @@ int main() {
             }
         }
 
+        // Simple supply-and-demand logic: if there are no drivers left, 
+        // we spike the price. If only a few are left, we raise it slightly.
         float surge_multiplier = 1.0;
         if (available_drivers == 0 && on_trip_drivers > 0) {
-            surge_multiplier = 2.5; // High demand, no supply
+            surge_multiplier = 2.5;
         } else if (available_drivers > 0 && available_drivers <= 2) {
-            surge_multiplier = 1.5; // Low supply
+            surge_multiplier = 1.5;
         } else {
-            surge_multiplier = 1.0; // Normal
+            surge_multiplier = 1.0;
         }
 
         // Write to Shared Memory for the Server to see!

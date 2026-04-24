@@ -25,12 +25,13 @@ void log_trip(int rider_id, int driver_id, int start_x, int start_y, int end_x, 
 
     struct flock lock;
     memset(&lock, 0, sizeof(lock));
-    lock.l_type = F_WRLCK; // Exclusive write lock
+    lock.l_type = F_WRLCK; // Ensure only one process can write to the ledger at a time
     lock.l_whence = SEEK_END;
     lock.l_start = 0;
-    lock.l_len = 0; // Lock to end of file
+    lock.l_len = 0; // Lock the entire file to prevent concurrent access issues
 
-    // Block until lock is acquired
+    // We use a write-lock here to make sure no other thread is reading or 
+    // writing the file at the same time. This prevents data corruption.
     if (fcntl(fd, F_SETLKW, &lock) == -1) {
         perror("Failed to acquire log lock");
         close(fd);
@@ -44,7 +45,7 @@ void log_trip(int rider_id, int driver_id, int start_x, int start_y, int end_x, 
     
     write(fd, entry, strlen(entry));
 
-    // Release lock
+    // Release the lock once writing is finished so other processes can access the file
     lock.l_type = F_UNLCK;
     if (fcntl(fd, F_SETLK, &lock) == -1) {
         perror("Failed to release lock");

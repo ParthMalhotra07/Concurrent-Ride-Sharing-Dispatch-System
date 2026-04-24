@@ -7,7 +7,8 @@
 static SystemGridMap* grid_shm = NULL;
 static sem_t* driver_pool_sem = NULL;
 
-// Mutex to protect iterating over and editing the grid map to prevent double booking.
+// This mutex is here to prevent two riders from trying to book the same driver 
+// at the exact same time. It makes sure our matching process is "atomic."
 static pthread_mutex_t driver_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void init_match_core(SystemGridMap* shm_ptr, sem_t* pool_sem) {
@@ -36,7 +37,8 @@ void update_driver_status(int driver_id, DriverStatus status, int x, int y) {
         grid_shm->grid[driver_index].current_loc.x = x;
         grid_shm->grid[driver_index].current_loc.y = y;
 
-        // Update semaphore when driver becomes available
+        // If a driver becomes available, signal the semaphore so the 
+        // system knows that a new driver resource is ready for matching.
         if (old_status != STATUS_AVAILABLE && status == STATUS_AVAILABLE) {
             sem_post(driver_pool_sem);
         }
@@ -49,7 +51,8 @@ int request_ride(int rider_id, int rider_x, int rider_y, int* exclude_list, int 
 
     printf("[MATCH] Rider %d at (%d,%d) is requesting a ride...\n", rider_id, rider_x, rider_y);
 
-    // Concurrency check: wait for an available driver in the pool
+    // Before we even search the grid, we check the semaphore pool. If it's zero, 
+    // it means no drivers are online, so we don't waste time searching.
     if (sem_trywait(driver_pool_sem) != 0) {
         printf("[MATCH] No available drivers in pool for Rider %d.\n", rider_id);
         return -1;

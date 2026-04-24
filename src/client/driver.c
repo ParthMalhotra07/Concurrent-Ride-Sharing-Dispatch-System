@@ -17,6 +17,9 @@ int is_online = 0;
 int current_x = 0;
 int current_y = 0;
 
+// This thread runs in the background to listen for messages from the server.
+// It's mainly here to catch "Ride Offers" that the server pushes to us 
+// even while we are sitting in the main menu.
 void* server_listener_thread(void* arg) {
     (void)arg;
     MessagePacket res;
@@ -113,6 +116,8 @@ int main() {
 
             switch (choice) {
                 case 1:
+                    // When the driver goes online, we notify the server so we 
+                    // can start receiving ride requests.
                     is_online = 1;
                     packet.type = MSG_LOC_UPDATE;
                     sprintf(packet.payload, "%d %d %d", STATUS_AVAILABLE, current_x, current_y);
@@ -120,6 +125,7 @@ int main() {
                     printf("Status set to: AVAILABLE.\n");
                     break;
                 case 2:
+                    // Going offline tells the server to stop sending us rides.
                     is_online = 0;
                     packet.type = MSG_LOC_UPDATE;
                     sprintf(packet.payload, "%d %d %d", STATUS_OFFLINE, current_x, current_y);
@@ -127,6 +133,8 @@ int main() {
                     printf("Status set to: OFFLINE.\n");
                     break;
                 case 3:
+                    // We send our new coordinates to the server so it can 
+                    // calculate the distance when a rider makes a request.
                     printf("Enter new X Y (e.g. 5 10): ");
                     if (scanf("%d %d", &current_x, &current_y) != 2) {
                         printf("Invalid input! Please enter numbers only.\n");
@@ -139,6 +147,8 @@ int main() {
                     printf("Location updated to (%d, %d)\n", current_x, current_y);
                     break;
                 case 4: {
+                    // This reads the trip ledger file and filters for our driver ID
+                    // to calculate how many trips we've done and how much we've made.
                     FILE *fp = fopen("data/ledger.txt", "r");
                     if (!fp) {
                         printf("No earnings history available yet.\n");
