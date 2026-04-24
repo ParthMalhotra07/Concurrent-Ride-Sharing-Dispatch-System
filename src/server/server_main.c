@@ -119,6 +119,12 @@ void* handle_client(void* arg) {
                         strcpy(packet.payload, "Account banned.");
                         send(client_sock, &packet, sizeof(MessagePacket), 0);
                         printf("[SERVER] Rejected banned user '%s'.\n", username);
+                    } else if (user_sockets[current_user.user_id] != 0) {
+                        // Session already active — reject duplicate login
+                        packet.type = MSG_ERROR;
+                        strcpy(packet.payload, "Already logged in from another session.");
+                        send(client_sock, &packet, sizeof(MessagePacket), 0);
+                        printf("[SERVER] Rejected duplicate login for '%s'.\n", username);
                     } else {
                         authenticated = 1;
                         user_sockets[current_user.user_id] = client_sock;
