@@ -57,7 +57,7 @@ int main() {
         while (1) {
             printf("\n--- ADMIN DASHBOARD ---\n");
             printf("1. System Status Summary\n");
-            printf("2. Manage Users (Stub)\n");
+            printf("2. View Full Trip Ledger\n");
             printf("3. Logout & Exit\n");
             printf("Choice: ");
             if (scanf("%d", &choice) != 1) break;
@@ -99,44 +99,31 @@ int main() {
                     break;
                 }
                 case 2: {
-                    printf("\n[User Management] Ban a User\n");
-                    char target_user[32];
-                    printf("Enter username to lock out: ");
-                    scanf("%31s", target_user);
-                    
-                    // Simple file rewrite to lock out a user (removes them from users.dat)
-                    FILE *fp = fopen("data/users.dat", "r");
-                    FILE *ftemp = fopen("data/users_temp.dat", "w");
-                    if (fp == NULL || ftemp == NULL) {
-                        printf("Error accessing user database.\n");
-                        if(fp) fclose(fp);
-                        if(ftemp) fclose(ftemp);
+                    FILE *fp = fopen("data/ledger.txt", "r");
+                    if (!fp) {
+                        printf("Ledger file not found.\n");
                         break;
                     }
-                    
-                    char line[128];
-                    int found = 0;
+                    int fd = fileno(fp);
+                    struct flock lock;
+                    memset(&lock, 0, sizeof(lock));
+                    lock.l_type = F_RDLCK;
+                    lock.l_whence = SEEK_SET;
+                    lock.l_start = 0;
+                    lock.l_len = 0;
+                    if (fcntl(fd, F_SETLKW, &lock) == -1) {
+                        perror("Failed to lock ledger");
+                        fclose(fp);
+                        break;
+                    }
+                    printf("\n--- COMPLETE SYSTEM LEDGER ---\n");
+                    char line[256];
                     while (fgets(line, sizeof(line), fp)) {
-                        char u_name[32];
-                        sscanf(line, "%*d %31s", u_name);
-                        if (strcmp(u_name, target_user) == 0) {
-                            found = 1;
-                            // Optionally, we could write them back with a locked out role, but omitting them effectively bans them.
-                            continue; 
-                        }
-                        fputs(line, ftemp);
+                        printf(" %s", line);
                     }
+                    lock.l_type = F_UNLCK;
+                    fcntl(fd, F_SETLK, &lock);
                     fclose(fp);
-                    fclose(ftemp);
-                    
-                    if (found) {
-                        remove("data/users.dat");
-                        rename("data/users_temp.dat", "data/users.dat");
-                        printf("Success: User '%s' has been locked out of the system.\n", target_user);
-                    } else {
-                        remove("data/users_temp.dat");
-                        printf("Error: User '%s' not found in database.\n", target_user);
-                    }
                     break;
                 }
                 default:

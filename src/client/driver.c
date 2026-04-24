@@ -96,13 +96,14 @@ int main() {
             printf("1. Go Online (Available for rides)\n");
             printf("2. Go Offline\n");
             printf("3. Update My Location (x,y)\n");
-            printf("4. Logout & Exit\n");
+            printf("4. View My Earnings\n");
             printf("5. Accept Pending Ride Offer\n");
             printf("6. Reject Pending Ride Offer\n");
+            printf("7. Logout & Exit\n");
             printf("Choice: ");
             if (scanf("%d", &choice) != 1) break;
 
-            if (choice == 4) {
+            if (choice == 7) {
                 is_online = 0;
                 packet.type = MSG_DISCONNECT;
                 strcpy(packet.payload, "Bye");
@@ -137,6 +138,46 @@ int main() {
                     send(sock, &packet, sizeof(packet), 0);
                     printf("Location updated to (%d, %d)\n", current_x, current_y);
                     break;
+                case 4: {
+                    FILE *fp = fopen("data/ledger.txt", "r");
+                    if (!fp) {
+                        printf("No earnings history available yet.\n");
+                        break;
+                    }
+                    int fd = fileno(fp);
+                    struct flock lock;
+                    memset(&lock, 0, sizeof(lock));
+                    lock.l_type = F_RDLCK;
+                    lock.l_whence = SEEK_SET;
+                    lock.l_start = 0;
+                    lock.l_len = 0;
+                    if (fcntl(fd, F_SETLKW, &lock) == -1) {
+                        perror("Failed to lock ledger");
+                        fclose(fp);
+                        break;
+                    }
+                    printf("\n--- MY EARNINGS REPORT ---\n");
+                    char line[256];
+                    int total_money = 0;
+                    int trip_count = 0;
+                    while (fgets(line, sizeof(line), fp)) {
+                        int r_id, d_id, sx, sy, ex, ey, fare;
+                        if (sscanf(line, "TRIP %d %d %d %d %d %d %d", &r_id, &d_id, &sx, &sy, &ex, &ey, &fare) == 7) {
+                            if (d_id == my_id) {
+                                printf(" -> Trip: From (%d,%d) to (%d,%d) | Fare: $%d\n", sx, sy, ex, ey, fare);
+                                total_money += fare;
+                                trip_count++;
+                            }
+                        }
+                    }
+                    printf("---------------------------\n");
+                    printf(" TOTAL TRIPS: %d\n", trip_count);
+                    printf(" TOTAL EARNED: $%d\n", total_money);
+                    lock.l_type = F_UNLCK;
+                    fcntl(fd, F_SETLK, &lock);
+                    fclose(fp);
+                    break;
+                }
                 case 5:
                     packet.type = MSG_RIDE_ACCEPT;
                     strcpy(packet.payload, "Accepted");

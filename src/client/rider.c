@@ -57,11 +57,12 @@ int main() {
         while (1) {
             printf("\n--- RIDER MENU ---\n");
             printf("1. Request a Ride\n");
-            printf("2. Logout & Exit\n");
+            printf("2. View My Trip History\n");
+            printf("3. Logout & Exit\n");
             printf("Choice: ");
             if (scanf("%d", &choice) != 1) break;
 
-            if (choice == 2) {
+            if (choice == 3) {
                 packet.type = MSG_DISCONNECT;
                 strcpy(packet.payload, "Bye");
                 send(sock, &packet, sizeof(packet), 0);
@@ -89,6 +90,42 @@ int main() {
                     } else {
                         printf("\n[ERROR] %s\n", res.payload);
                     }
+                    break;
+                }
+                case 2: {
+                    FILE *fp = fopen("data/ledger.txt", "r");
+                    if (!fp) {
+                        printf("No trip history available yet.\n");
+                        break;
+                    }
+                    int fd = fileno(fp);
+                    struct flock lock;
+                    memset(&lock, 0, sizeof(lock));
+                    lock.l_type = F_RDLCK;
+                    lock.l_whence = SEEK_SET;
+                    lock.l_start = 0;
+                    lock.l_len = 0;
+                    if (fcntl(fd, F_SETLKW, &lock) == -1) {
+                        perror("Failed to lock ledger");
+                        fclose(fp);
+                        break;
+                    }
+                    printf("\n--- MY TRIP HISTORY ---\n");
+                    char line[256];
+                    int count = 0;
+                    while (fgets(line, sizeof(line), fp)) {
+                        int r_id, d_id, sx, sy, ex, ey, fare;
+                        if (sscanf(line, "TRIP %d %d %d %d %d %d %d", &r_id, &d_id, &sx, &sy, &ex, &ey, &fare) == 7) {
+                            if (r_id == my_id) {
+                                printf(" -> Ride to (%d,%d) | Driver ID: %d | Fare: $%d\n", ex, ey, d_id, fare);
+                                count++;
+                            }
+                        }
+                    }
+                    if (count == 0) printf("    No trips found.\n");
+                    lock.l_type = F_UNLCK;
+                    fcntl(fd, F_SETLK, &lock);
+                    fclose(fp);
                     break;
                 }
                 default:
