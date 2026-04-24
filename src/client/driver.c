@@ -11,29 +11,11 @@
 #define SERVER_IP "127.0.0.1"
 #define PORT 8080
 
-// Global variables for the GPS Thread
+// Global variables for the Listener Thread
 int global_sock;
 int is_online = 0;
 int current_x = 0;
 int current_y = 0;
-
-void* gps_tracker_thread(void* arg) {
-    (void)arg;
-    MessagePacket packet;
-    while (1) {
-        if (is_online) {
-            packet.type = MSG_LOC_UPDATE;
-            sprintf(packet.payload, "%d %d %d", STATUS_AVAILABLE, current_x, current_y);
-            send(global_sock, &packet, sizeof(packet), 0);
-            
-            // Move randomly to simulate real driving!
-            current_x += (rand() % 3) - 1;
-            current_y += (rand() % 3) - 1;
-        }
-        sleep(5); // Ping server every 5 seconds
-    }
-    return NULL;
-}
 
 void* server_listener_thread(void* arg) {
     (void)arg;
@@ -104,9 +86,7 @@ int main() {
         int choice;
         
         global_sock = sock;
-        pthread_t gps_thread, listener_thread;
-        pthread_create(&gps_thread, NULL, gps_tracker_thread, NULL);
-        pthread_detach(gps_thread);
+        pthread_t listener_thread;
         
         pthread_create(&listener_thread, NULL, server_listener_thread, NULL);
         pthread_detach(listener_thread);
@@ -136,14 +116,14 @@ int main() {
                     packet.type = MSG_LOC_UPDATE;
                     sprintf(packet.payload, "%d %d %d", STATUS_AVAILABLE, current_x, current_y);
                     send(sock, &packet, sizeof(packet), 0);
-                    printf("Status set to: AVAILABLE. Background GPS Started.\n");
+                    printf("Status set to: AVAILABLE.\n");
                     break;
                 case 2:
                     is_online = 0;
                     packet.type = MSG_LOC_UPDATE;
                     sprintf(packet.payload, "%d %d %d", STATUS_OFFLINE, current_x, current_y);
                     send(sock, &packet, sizeof(packet), 0);
-                    printf("Status set to: OFFLINE. Background GPS Paused.\n");
+                    printf("Status set to: OFFLINE.\n");
                     break;
                 case 3:
                     printf("Enter new X Y (e.g. 5 10): ");
