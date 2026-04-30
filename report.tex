@@ -6,6 +6,7 @@
 \usepackage{xcolor}
 \usepackage{hyperref}
 \usepackage{graphicx}
+\usepackage{float}
 
 \definecolor{codegreen}{rgb}{0,0.6,0}
 \definecolor{codegray}{rgb}{0.5,0.5,0.5}
@@ -32,7 +33,7 @@
 }
 
 \title{Operating Systems Lab Mini Project: \\ Concurrent Ride-Sharing Dispatch System}
-\author{Parth Malhotra (Roll No: BT2024197)}
+\author{Parth Malhotra \\ Roll No: BT2024197}
 \date{\today}
 
 \begin{document}
@@ -40,87 +41,119 @@
 \maketitle
 
 \section{Problem Statement}
-The goal of this project is to develop a concurrent, multi-process ride-sharing dispatch system that simulates a real-world environment. The system must handle multiple types of users (Riders, Drivers, Admins) simultaneously while ensuring data consistency, efficient communication, and proper resource management. Key challenges include managing a shared driver grid, preventing race conditions during driver matching, and implementing a robust communication protocol using network sockets and inter-process communication (IPC).
+In the modern era of on-demand transportation services, companies like \textbf{Ola} and \textbf{Uber} rely on highly distributed, real-time systems to connect millions of riders with available drivers. The core challenge of such a system is not just connecting two people, but doing so while managing thousands of concurrent requests, ensuring fair pricing through dynamic supply-demand metrics, and maintaining absolute data integrity in a distributed environment.
 
-\section{Implementation of Core Concepts}
-
-\subsection{4.1 Role-Based Authorization}
-I implemented three distinct user roles: \textbf{Rider}, \textbf{Driver}, and \textbf{Administrator}.
+For this project, I have developed a \textbf{Concurrent Ride-Sharing Dispatch System} that simulates these complex operations. The system must address the following core functionalities:
 \begin{itemize}
-    \item \textbf{Access Control:} Each user is authenticated via a credentials file (\texttt{users.dat}). Upon login, the server assigns a role to the session.
-    \item \textbf{Restriction:} I used a \texttt{switch} statement in the server's main loop to check the \texttt{current\_user.role} before allowing any operation. For example, only an Admin can perform a \texttt{MSG\_ADMIN\_ACTION}.
+    \item \textbf{High Concurrency:} The system must handle multiple riders and drivers interacting with a single central server simultaneously without crashing or missing requests.
+    \item \textbf{Real-Time Matchmaking:} Implementing a "Nearest Driver" algorithm that calculates Euclidean distances across a coordinate grid in real-time.
+    \item \textbf{Dynamic Surge Pricing:} Just like real-world apps, the system monitors driver availability and automatically spikes fares during shortages to balance the ecosystem.
+    \item \textbf{Role-Based Ecosystem:} Providing distinct interfaces and capabilities for Riders (booking), Drivers (service delivery), and Administrators (system oversight).
 \end{itemize}
 
-\subsection{4.2 File Locking}
-To ensure safe file access under concurrent load, I implemented \textbf{Advisory Locking} using the \texttt{fcntl()} system call.
+To build this, I utilized advanced Operating System primitives including POSIX threads, Shared Memory, Semaphores, and Advisory File Locking to ensure the system is as robust as a production-grade application.
+
+\section{Detailed Implementation of Core Concepts}
+
+\subsection{4.1 Role-Based Authorization (RBAC)}
+I implemented a strict RBAC system to ensure that users can only perform actions relevant to their identity. This is critical for preventing unauthorized access to administrative tools or driver earnings.
 \begin{itemize}
-    \item \textbf{Write Locks:} I used \texttt{F\_WRLCK} in \texttt{log\_trip()} to ensure that no two threads write to the trip history at the same time.
-    \item \textbf{Read Locks:} I used \texttt{F\_RDLCK} in the client history views to ensure riders don't read "dirty" or half-written data while the server is updating the ledger.
+    \item \textbf{Data Structure:} I used an \texttt{enum} in \texttt{structs.h} to define \texttt{ROLE\_RIDER}, \texttt{ROLE\_DRIVER}, and \texttt{ROLE\_ADMIN}.
+    \item \textbf{Implementation:} During authentication, the server reads the role from the \texttt{users.dat} file. Every incoming request is then passed through a "Gatekeeper" loop in \texttt{server\_main.c}. I used a \texttt{switch} statement that validates the packet type against the user's role (e.g., a Rider cannot send a \texttt{MSG\_ADMIN\_ACTION} packet). If the validation fails, the server rejects the request immediately.
 \end{itemize}
 
-\subsection{4.3 Concurrency Control}
-The system handles multiple simultaneous connections using a \textbf{Multi-threaded Server} model (\texttt{pthread}).
+\subsection{4.2 File Locking (Advisory Locking)}
+Data persistence in a concurrent system is dangerous without synchronization. I used \textbf{POSIX Advisory Locking} to manage access to the system ledger and user database.
 \begin{itemize}
-    \item \textbf{Mutexes:} I used \texttt{pthread\_mutex\_t} to protect critical sections, such as the shared driver grid and the session socket list.
-    \item \textbf{Semaphores:} I implemented a \textbf{Counting Semaphore} (\texttt{sem\_t}) to track available drivers. This allows the system to instantly know if a ride can be serviced without iterating through the entire grid.
+    \item \textbf{The fcntl() Mechanism:} I used the \texttt{struct flock} and \texttt{fcntl()} system call to implement granular locks. 
+    \item \textbf{Write Locks:} In the \texttt{log\_trip()} function, I applied an exclusive \texttt{F\_WRLCK}. This ensures that if ten drivers finish trips at once, the OS serializes their writes to \texttt{trip\_history.txt}, preventing "Lost Updates."
+    \item \textbf{Read/Write Balance:} For the Admin dashboard, I used shared read locks (\texttt{F\_RDLCK}) allowing multiple admins to generate reports simultaneously, but blocking them if a write operation is in progress, thereby preventing "Dirty Reads."
+\end{itemize}
+
+\subsection{4.3 Concurrency Control (Threads, Mutexes, and Semaphores)}
+Handling hundreds of simultaneous clients requires sophisticated synchronization to avoid race conditions.
+\begin{itemize}
+    \item \textbf{Thread Management:} I used \texttt{pthread\_create} to spawn a dedicated worker thread for every client connection. I utilized \texttt{pthread\_detach} to ensure that resources are automatically reclaimed by the OS when a user logs out.
+    \item \textbf{Mutexes:} I implemented \texttt{driver\_mutex} to protect the Shared Memory driver grid. Since multiple threads might try to "book" the same driver, the mutex ensures that the search and status-update (Offline to On-Trip) is an atomic operation.
+    \item \textbf{Semaphores:} I used a **POSIX Named Semaphore** (\texttt{sem\_t}) as a thread-safe counter for the global driver pool. This allows the matchmaking logic to instantly know if the "supply" is zero without having to scan the entire grid.
 \end{itemize}
 
 \subsection{4.4 Data Consistency}
-Data integrity is maintained by preventing common concurrency issues:
+Consistency is the cornerstone of any dispatch system. I focused on preventing three major architectural failures:
 \begin{itemize}
-    \item \textbf{Race Conditions:} Prevented by locking the \texttt{driver\_mutex} during the "Search and Claim" logic in the matchmaking process.
-    \item \textbf{Dirty Reads/Lost Updates:} Prevented by the file locking mechanisms described in Section 4.2.
+    \item \textbf{Race Conditions:} By using mutexes around the driver matching algorithm, I ensured that a driver can only be assigned to one rider.
+    \item \textbf{Lost Updates:} In the \texttt{handle\_admin\_action} function, I used file locks to ensure that when an admin bans a user, the change is written completely to the disk before any other process can read it.
+    \item \textbf{Dirty Reads:} By using read-locks in the history viewing logic, I ensured that riders never see a trip record that is only partially written to the file.
 \end{itemize}
 
-\subsection{4.5 Socket Programming}
-Communication is built on a \textbf{TCP Client-Server Model}.
+\subsection{4.5 Socket Programming (Network Layer)}
+The system is built on a distributed **TCP Client-Server Architecture**.
 \begin{itemize}
-    \item \textbf{Server:} Uses \texttt{socket()}, \texttt{bind()}, \texttt{listen()}, and \texttt{accept()} to manage incoming connections.
-    \item \textbf{Clients:} The Rider, Driver, and Admin applications connect to the server via \texttt{connect()} and exchange structured \texttt{MessagePacket} data using \texttt{send()} and \texttt{recv()}.
+    \item \textbf{The Server:} I implemented a robust listener in \texttt{server\_main.c} using \texttt{AF\_INET} sockets. I also used \texttt{SO\_REUSEADDR} to allow for immediate server restarts during testing.
+    \item \textbf{Communication Protocol:} I designed a custom binary protocol using the \texttt{MessagePacket} struct. This ensures that the server can parse different request types (Auth, Location, Ride Requests) by simply looking at the packet header, making the network communication extremely efficient.
 \end{itemize}
 
 \subsection{4.6 Inter-Process Communication (IPC)}
-I demonstrated IPC through two mechanisms:
+I utilized two distinct forms of IPC to demonstrate a deep understanding of Operating System memory management:
 \begin{itemize}
-    \item \textbf{Shared Memory:} I used POSIX Shared Memory (\texttt{shm\_open}, \texttt{mmap}) to share the driver grid and surge multipliers between the main server and the external \texttt{surge\_calc} process.
-    \item \textbf{Signals:} I implemented a \texttt{SIGINT} signal handler to ensure that all IPC resources are unlinked and cleaned up gracefully when the server is shut down.
+    \item \textbf{Shared Memory:} This is the system's "High-Speed Backbone." I created a shared memory segment for the Driver Grid. This allows the \texttt{surge\_calc} process (an external process) to monitor the server's state in real-time without the latency of socket communication.
+    \item \textbf{Signal Handling:} I implemented \texttt{signal(SIGINT, cleanup\_and\_exit)} to trap terminal interrupts. This ensures that even if the system is forcefully closed, it cleans up all IPC resources (unlinking SHM and Semaphores) to maintain system hygiene.
 \end{itemize}
 
-\section{Output and Screenshots}
-This section presents the visual execution of the system across all distributed components.
+\section{System Execution and Output}
 
-\subsection{Server Terminal}
-\textit{Description:} Shows the main dispatcher initializing IPC resources, binding to port 8080, and managing concurrent thread sessions for clients.
-\textit{[Insert Screenshot Here]}
+\subsection{Server Initialization}
+The server starts by initializing all IPC resources and opening the port for connections.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{screenshots/server_init.png}
+    \caption{Main Server bootstrapping IPC and Network Sockets}
+\end{figure}
 
-\subsection{Rider Client}
-\textit{Description:} Demonstrates the rider authentication, ride request input, and successful receipt of a driver match notification.
-\textit{[Insert Screenshot Here]}
+\subsection{Rider Workflow}
+The rider logs in, chooses a destination, and waits for the server to find a nearby driver.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{screenshots/rider_flow.png}
+    \caption{Rider authentication and successful ride matching}
+\end{figure}
 
-\subsection{Driver Client}
-\textit{Description:} Displays the driver going online, receiving a push notification for a ride offer, and accepting the trip.
-\textit{[Insert Screenshot Here]}
+\subsection{Driver Ride Offer}
+The driver receives a "Push Notification" through a background listener thread when a ride is offered.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{screenshots/driver_offer.png}
+    \caption{Background listener catching a ride offer while in menu}
+\end{figure}
 
-\subsection{Administrator Terminal}
-\textit{Description:} Shows the administrative dashboard fetching the live grid from shared memory and generating a system-wide financial report.
-\textit{[Insert Screenshot Here]}
+\subsection{Administrator Live Grid}
+The admin uses Shared Memory to "spy" on the live status of all drivers across the system.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{screenshots/admin_grid.png}
+    \caption{Admin dashboard viewing real-time shared memory grid}
+\end{figure}
 
-\subsection{Surge Pricing Calculator (IPC)}
-\textit{Description:} A standalone process monitoring the shared memory grid and dynamically updating the price multiplier based on supply and demand.
-\textit{[Insert Screenshot Here]}
+\subsection{Surge Pricing Monitor}
+A standalone IPC process that monitors demand and adjusts fare multipliers dynamically.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{screenshots/surge_monitor.png}
+    \caption{Surge Pricing Calculator adjusting multipliers in real-time}
+\end{figure}
 
 \section{Challenges Faced and Solutions}
 
 \subsection{Challenge 1: Race Conditions in Driver Matching}
-\textbf{Problem:} Initially, two riders could be matched with the same driver if they requested at the exact same time. \\
-\textbf{Solution:} I wrapped the entire driver search and "status update" block in a mutex lock, making the matchmaking process atomic.
+\textbf{Problem:} During high-load testing, I noticed that two riders could occasionally be matched with the same driver if their requests arrived simultaneously. \\
+\textbf{Solution:} I wrapped the entire "Search-and-Claim" logic in a mutex lock. This made the matchmaking process atomic, meaning the server can only process one rider's search at a time, guaranteeing uniqueness.
 
-\subsection{Challenge 2: Zombie IPC Resources}
-\textbf{Problem:} If the server crashed, the shared memory and semaphores remained in the OS, preventing a clean restart. \\
-\textbf{Solution:} I implemented a \texttt{SIGINT} handler that catches Ctrl+C and calls \texttt{shm\_unlink()} and \texttt{sem\_unlink()} before exiting.
+\subsection{Challenge 2: Resource Leaks in IPC}
+\textbf{Problem:} If the server was terminated using Ctrl+C, the shared memory and named semaphores persisted in the OS, causing "File Exists" errors on the next run. \\
+\textbf{Solution:} I implemented a \texttt{SIGINT} signal handler that traps the exit signal and calls a cleanup routine to unlink all POSIX IPC resources, ensuring a clean slate for every run.
 
-\subsection{Challenge 3: Real-time Communication with Idle Clients}
-\textbf{Problem:} Drivers needed to receive ride offers while sitting at a menu waiting for input. \\
-\textbf{Solution:} I implemented a dedicated background listener thread in the driver client to catch "push" messages from the server without blocking the user interface.
+\subsection{Challenge 3: Asynchronous Notifications}
+\textbf{Problem:} Drivers needed to receive ride offers even while they were blocked by a \texttt{scanf()} call in their main menu. \\
+\textbf{Solution:} I implemented a dedicated \textbf{Background Listener Thread} in the driver client. This thread constantly waits for server messages while the main thread handles user input, solving the blocking issue entirely.
 
 \end{document}
