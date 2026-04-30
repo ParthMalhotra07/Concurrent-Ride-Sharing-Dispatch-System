@@ -12,7 +12,6 @@ bin/
 .vscode/
 .idea/
 
-# (Optional) You can uncomment these if you don't want to push the user database 
-# and ledger history to github, although usually helpful for a grader!
-# data/ledger.txt
+# Application data files
+# data/trip_history.txt
 # data/users.dat

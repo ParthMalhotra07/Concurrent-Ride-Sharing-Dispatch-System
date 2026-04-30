@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==========================================
-# ADVANCED TEST SUITE: OS Ride-Sharing
+# SYSTEM VERIFICATION SUITE
 # ==========================================
 # Run via: bash advanced_test_suite.sh
 
@@ -164,6 +164,6 @@ fi
 cleanup # Final sweep
 
 echo -e "\n${GREEN}==================================================${NC}"
-echo -e "${GREEN} ALL 6 OS TESTS PASSED! ZERO VULNERABILITIES DETECTED ${NC}"
+echo -e "${GREEN} ALL 6 SYSTEM TESTS PASSED! DATA CONSISTENCY VERIFIED ${NC}"
 echo -e "${GREEN}==================================================${NC}"
 exit 0
