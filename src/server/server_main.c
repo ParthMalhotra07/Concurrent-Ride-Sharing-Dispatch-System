@@ -18,8 +18,8 @@
 #define USERS_FILE "data/users.dat"
 #define TRIP_HISTORY_FILE "data/trip_history.txt"
 
-// These are our global variables for keeping track of the server state
-// We use mutexes to make sure different threads don't mess with the same data at once
+// These are my global variables for keeping track of the server state
+// I use mutexes to make sure different threads don't mess with the same data at once
 pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t driver_mutex = PTHREAD_MUTEX_INITIALIZER;
 static SystemGridMap* grid_shm = NULL;
@@ -52,7 +52,7 @@ int authenticate_user(const char* username, const char* password, UserRecord* ou
 }
 
 /*
-   We use this to save every finished trip into a text file.
+   I use this to save every finished trip into a text file.
    It uses fcntl locking to make sure two threads don't write at the same time.
 */
 void log_trip(int rider_id, int driver_id, int sx, int sy, int dx, int dy, int fare) {
@@ -75,7 +75,7 @@ void log_trip(int rider_id, int driver_id, int sx, int sy, int dx, int dy, int f
 
 /*
    Updates where a driver is and what they are doing.
-   If a driver becomes available, we increment the semaphore so riders can find them.
+   If a driver becomes available, I increment the semaphore so riders can find them.
 */
 void update_driver_status(int driver_id, DriverStatus status, int x, int y) {
     pthread_mutex_lock(&driver_mutex);
@@ -301,7 +301,7 @@ void handle_admin_action(int client_sock, MessagePacket* packet) {
 
 /*
    Cleans up everything before the server closes.
-   We make sure to unlink shared memory so it doesn't leak.
+   I make sure to unlink shared memory so it doesn't leak.
 */
 void cleanup_and_exit(int sig) {
     (void)sig; 
@@ -313,7 +313,7 @@ void cleanup_and_exit(int sig) {
 }
 
 /*
-   Sets up our shared memory and semaphores when the server starts.
+   Sets up my shared memory and semaphores when the server starts.
 */
 void setup_ipc() {
     int shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);

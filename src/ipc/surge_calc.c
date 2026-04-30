@@ -21,14 +21,14 @@ int main() {
         return 1;
     }
 
-    // Map the grid into our address space so we can read it
+    // Map the grid into my address space so I can read it
     SystemGridMap* grid_shm = mmap(NULL, SHM_SIZE, PROT_READ, MAP_SHARED, shm_fd, 0);
     if (grid_shm == MAP_FAILED) {
         perror("mmap failed");
         return 1;
     }
 
-    // We also create another shared memory segment to send the multiplier back to the server
+    // I also create another shared memory segment to send the multiplier back to the server
     int surge_fd = shm_open(SURGE_SHM_NAME, O_CREAT | O_RDWR, 0666);
     ftruncate(surge_fd, sizeof(SurgeState));
     SurgeState* surge_shm = mmap(NULL, sizeof(SurgeState), PROT_READ | PROT_WRITE, MAP_SHARED, surge_fd, 0);
@@ -53,8 +53,8 @@ int main() {
         }
 
         /* 
-           Simple supply-and-demand logic: if there are no drivers left, we spike 
-           the price. If only a few are left, we raise it slightly to 1.5x.
+           Simple supply-and-demand logic: if there are no drivers left, I spike 
+           the price. If only a few are left, I raise it slightly to 1.5x.
         */
         float surge_multiplier = 1.0;
         if (available_drivers == 0 && on_trip_drivers > 0) {

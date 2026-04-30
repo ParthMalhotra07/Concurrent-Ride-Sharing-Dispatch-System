@@ -31,7 +31,7 @@ void* server_listener_thread(void* arg) {
             printf("\n[Disconnected from server]\n");
             exit(0);
         }
-        // If the server sends a ride offer, we print it to the screen
+        // If the server sends a ride offer, I print it to the screen
         if (res.type == MSG_RIDE_OFFER) {
             int sx, sy, dx, dy;
             sscanf(res.payload, "%d %d %d %d", &sx, &sy, &dx, &dy);
@@ -47,7 +47,7 @@ void* server_listener_thread(void* arg) {
 
 /* 
    Main driver program. It handles the UI, login, and sending status updates
-   to the server like our current location or if we are online/offline.
+   to the server like my current location or if I are online/offline.
 */
 int main() {
     int sock;

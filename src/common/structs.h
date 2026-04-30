@@ -6,8 +6,8 @@
 #include <semaphore.h>
 
 /* 
-   We define some constants here for the shared memory names and the max 
-   number of drivers we want to handle in the grid.
+   I define some constants here for the shared memory names and the max 
+   number of drivers I want to handle in the grid.
 */
 #define MAX_DRIVERS 100
 #define SHM_NAME "/ride_share_shm"
@@ -35,7 +35,7 @@ typedef enum {
 
 /* 
    The packet structure for every socket message. 
-   We just use a fixed size payload to keep things simple for this project.
+   I just use a fixed size payload to keep things simple for this project.
 */
 typedef struct {
     MessageType type;
@@ -43,12 +43,12 @@ typedef struct {
 } MessagePacket;
 
 /* 
-   Roles for different types of users in our system.
+   Roles for different types of users in my system.
 */
 typedef enum { ROLE_RIDER = 0, ROLE_DRIVER = 1, ROLE_ADMIN = 2 } UserRole;
 
 /* 
-   Basic info for a user that we read from the database.
+   Basic info for a user that I read from the database.
 */
 typedef struct {
     int user_id;
@@ -72,7 +72,7 @@ typedef struct {
 typedef enum { STATUS_OFFLINE = 0, STATUS_AVAILABLE = 1, STATUS_ON_TRIP = 2 } DriverStatus;
 
 /* 
-   This is what we store in the shared memory grid for each driver.
+   This is what I store in the shared memory grid for each driver.
 */
 typedef struct {
     int driver_id;

@@ -50,7 +50,7 @@ int main() {
     sprintf(packet.payload, "%s %s", username, password);
     send(sock, &packet, sizeof(packet), 0);
 
-    // Wait for the server to tell us if we are logged in or not
+    // Wait for the server to tell us if I are logged in or not
     MessagePacket res;
     recv(sock, &res, sizeof(res), 0);
 
@@ -88,7 +88,7 @@ int main() {
                     printf("Looking for a driver nearby...\n");
                     send(sock, &packet, sizeof(packet), 0);
                     
-                    // The server will block here until a driver accepts or we time out
+                    // The server will block here until a driver accepts or I time out
                     recv(sock, &res, sizeof(res), 0);
                     if (res.type == MSG_RIDE_MATCHED) {
                         printf("Matched with Driver ID %s! They are coming to pick you up.\n", res.payload);
@@ -99,8 +99,8 @@ int main() {
                 }
                 case 2: {
                     /* 
-                       We read the trip_history file directly to show the user their rides.
-                       We use a read-lock (F_RDLCK) so we don't read half-written data.
+                       I read the trip_history file directly to show the user their rides.
+                       I use a read-lock (F_RDLCK) so I don't read half-written data.
                     */
                     FILE *fp = fopen("data/trip_history.txt", "r");
                     if (!fp) {
