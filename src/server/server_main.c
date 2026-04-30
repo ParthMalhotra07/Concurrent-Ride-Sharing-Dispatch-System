@@ -362,6 +362,7 @@ void* handle_client(void* arg) {
         } else {
             switch(packet.type) {
                 case MSG_DISCONNECT:
+                    printf("User %s (ID: %d) requested logout.\n", current_user.username, current_user.user_id);
                     pthread_mutex_lock(&session_mutex); 
                     user_sockets[current_user.user_id] = 0; 
                     pthread_mutex_unlock(&session_mutex);
@@ -374,6 +375,7 @@ void* handle_client(void* arg) {
                         int s, x, y; 
                         if (sscanf(packet.payload, "%d %d %d", &s, &x, &y) == 3) {
                             update_driver_status(current_user.user_id, (DriverStatus)s, x, y);
+                            printf("Location update from Driver %d: (%d, %d)\n", current_user.user_id, x, y);
                         }
                     }
                     break;
@@ -382,6 +384,7 @@ void* handle_client(void* arg) {
                         pthread_mutex_lock(&session_mutex); 
                         user_responses[current_user.user_id] = 1; 
                         pthread_mutex_unlock(&session_mutex); 
+                        printf("Driver %d accepted the ride.\n", current_user.user_id);
                     }
                     break;
                 case MSG_RIDE_REJECT:
@@ -389,13 +392,20 @@ void* handle_client(void* arg) {
                         pthread_mutex_lock(&session_mutex); 
                         user_responses[current_user.user_id] = 2; 
                         pthread_mutex_unlock(&session_mutex); 
+                        printf("Driver %d rejected the ride.\n", current_user.user_id);
                     }
                     break;
                 case MSG_RIDE_REQ:
-                    if (current_user.role == ROLE_RIDER) handle_ride_request(client_sock, &packet, &current_user);
+                    if (current_user.role == ROLE_RIDER) {
+                        printf("Ride request received from Rider %d.\n", current_user.user_id);
+                        handle_ride_request(client_sock, &packet, &current_user);
+                    }
                     break;
                 case MSG_ADMIN_ACTION:
-                    if (current_user.role == ROLE_ADMIN) handle_admin_action(client_sock, &packet);
+                    if (current_user.role == ROLE_ADMIN) {
+                        printf("Admin action received from %s.\n", current_user.username);
+                        handle_admin_action(client_sock, &packet);
+                    }
                     break;
                 default:
                     break;
