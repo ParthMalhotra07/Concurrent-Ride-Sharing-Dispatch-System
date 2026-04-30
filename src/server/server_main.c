@@ -96,9 +96,8 @@ int request_ride(int rider_id, int rider_x, int rider_y, int* exclude_list, int 
     return matched_driver;
 }
 
-// This function is triggered when we press Ctrl+C. It's important because it 
-// properly removes the shared memory and semaphores from the system so 
-// the OS doesn't get cluttered with stale resources.
+// Signal handler for graceful shutdown.
+// Ensures shared memory and semaphores are unlinked on exit.
 void cleanup_and_exit(int sig) {
     (void)sig; // Silence unused warning
     printf("Shutting down. Cleaning up IPC resources...\n");
@@ -144,7 +143,7 @@ void setup_ipc() {
     // 2. Initialize Named Semaphore (start at 0, goes up as drivers come online)
     sem_unlink(SEM_POOL_NAME); // Clean up from previous rough closures
 
-    //semaphore helps me ensure there is no race condintion 
+    // Semaphore to manage driver pool and prevent race conditions 
     driver_pool_sem = sem_open(SEM_POOL_NAME, O_CREAT, 0666, 0);
     if (driver_pool_sem == SEM_FAILED) {
         perror("sem_open failed");
@@ -154,10 +153,10 @@ void setup_ipc() {
     // 3. System initialized
     printf("IPC and Synchronization primitives initialized.\n");
     
-    printf("IPC and Synchronization primitives initialized.\n");
+
 }
 
-//function for individually handling each request 
+// Thread function for handling client requests 
 void* handle_client(void* arg) {
     int client_sock = *(int*)arg;
     free(arg);
@@ -173,7 +172,7 @@ void* handle_client(void* arg) {
         if (bytes_read <= 0) {
             printf("Client on socket %d disconnected abruptly.\n", client_sock);
             
-            // Vulnerability Fix: The Ghost Driver Cleanup
+            // Resource cleanup for disconnected drivers
             if (authenticated && current_user.role == ROLE_DRIVER) {
                 printf("Emergency Cleanup: Offlining Ghost Driver %d\n", current_user.user_id);
                 update_driver_status(current_user.user_id, STATUS_OFFLINE, 0, 0);
@@ -463,7 +462,7 @@ int main() {
     printf("Listening on port %d...\n", PORT);
 
     while (1) {
-        //infinte loop waiting for rider or driver to connectwith the server via message received 
+        // Main server loop 
         int* client_sock = malloc(sizeof(int));
         *client_sock = accept(server_sock, (struct sockaddr*)&client_addr, &client_len);
 
@@ -473,9 +472,7 @@ int main() {
             continue;
         }
 
-        //creating a new thread to handle the current request so that if any other user tries to access
-        //or send message the update is not lost so the new thread handles the current request and the original
-        //proccess continues to be in the while(1) loop and waiting for new requests 
+        // Handle the client request in a separate thread 
         pthread_t thread_id;
         if (pthread_create(&thread_id, NULL, handle_client, client_sock) != 0) {
             perror("Failed to create thread");

@@ -10,9 +10,8 @@ int main() {
     printf("Surge Pricing Calculator\n");
     printf("Monitoring Shared Memory Grid...\n");
 
-    // This process doesn't talk to the server via sockets. 
-    // Instead, it "spies" on the shared memory grid to see how many drivers 
-    // are available and calculates the surge price accordingly.
+    // The surge pricing calculator monitors the shared memory segment directly
+    // to observe driver availability and calculate multipliers in real-time.
     int shm_fd = shm_open(SHM_NAME, O_RDONLY, 0666);
     if (shm_fd == -1) {
         perror("shm_open failed! Is the server running?");

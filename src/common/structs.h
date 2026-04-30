@@ -5,7 +5,7 @@
 #include <fcntl.h>
 #include <semaphore.h>
 
-// I have set the max limit of drivers at a time =100 
+// Maximum number of concurrent drivers supported
 #define MAX_DRIVERS 100
 
 #define SHM_NAME "/ride_share_shm"
@@ -14,12 +14,8 @@
 
 
 
-//why do i need structs.h
-
-// this acts as a shared memory
-//It ensures that the Server, Clients, and IPC monitors all agree on the exact
-//memory alignment and byte-offsets of the data flowing through Sockets and
-//Shared Memory
+// Common data structures shared between Server, Clients, and IPC monitors
+// to ensure consistent memory alignment and protocol communication.
 
 typedef enum {
     MSG_AUTH_REQ, 
@@ -46,7 +42,7 @@ typedef enum { ROLE_RIDER = 0, ROLE_DRIVER = 1, ROLE_ADMIN = 2 } UserRole;
 typedef struct {
     int user_id;
     char username[32];
-    char password[64]; // Plaintext for course simplicity
+    char password[64]; // Plaintext for simplicity
     UserRole role;
     int is_banned;
 } UserRecord;
