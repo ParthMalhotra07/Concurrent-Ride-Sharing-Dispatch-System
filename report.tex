@@ -41,14 +41,14 @@
 \maketitle
 
 \section{Problem Statement}
-In the modern era of on-demand transportation services, companies like \textbf{Ola} and \textbf{Uber} rely on highly distributed, real-time systems to connect millions of riders with available drivers. The core challenge of such a system is not just connecting two people, but doing so while managing thousands of concurrent requests, ensuring fair pricing through dynamic supply-demand metrics, and maintaining absolute data integrity in a distributed environment.
+In the modern era of on-demand transportation services, companies like Ola and Uber rely on highly distributed, real-time systems to connect millions of riders with available drivers. The core challenge of such a system is not just connecting two people, but doing so while managing thousands of concurrent requests, ensuring fair pricing through dynamic supply-demand metrics, and maintaining absolute data integrity in a distributed environment.
 
-For this project, I have developed a \textbf{Concurrent Ride-Sharing Dispatch System} that simulates these complex operations. The system must address the following core functionalities:
+For this project, I have developed a Concurrent Ride-Sharing Dispatch System that simulates these complex operations. The system must address the following core functionalities:
 \begin{itemize}
-    \item \textbf{High Concurrency:} The system must handle multiple riders and drivers interacting with a single central server simultaneously without crashing or missing requests.
-    \item \textbf{Real-Time Matchmaking:} Implementing a "Nearest Driver" algorithm that calculates Euclidean distances across a coordinate grid in real-time.
-    \item \textbf{Dynamic Surge Pricing:} Just like real-world apps, the system monitors driver availability and automatically spikes fares during shortages to balance the ecosystem.
-    \item \textbf{Role-Based Ecosystem:} Providing distinct interfaces and capabilities for Riders (booking), Drivers (service delivery), and Administrators (system oversight).
+    \item High Concurrency: The system must handle multiple riders and drivers interacting with a single central server simultaneously without crashing or missing requests.
+    \item Real-Time Matchmaking: Implementing a Nearest Driver algorithm that calculates Euclidean distances across a coordinate grid in real-time.
+    \item Dynamic Surge Pricing: Just like real-world apps, the system monitors driver availability and automatically spikes fares during shortages to balance the ecosystem.
+    \item Role-Based Ecosystem: Providing distinct interfaces and capabilities for Riders (booking), Drivers (service delivery), and Administrators (system oversight).
 \end{itemize}
 
 To build this, I utilized advanced Operating System primitives including POSIX threads, Shared Memory, Semaphores, and Advisory File Locking to ensure the system is as robust as a production-grade application.
@@ -58,46 +58,46 @@ To build this, I utilized advanced Operating System primitives including POSIX t
 \subsection{4.1 Role-Based Authorization (RBAC)}
 I implemented a strict RBAC system to ensure that users can only perform actions relevant to their identity. This is critical for preventing unauthorized access to administrative tools or driver earnings.
 \begin{itemize}
-    \item \textbf{Data Structure:} I used an \texttt{enum} in \texttt{structs.h} to define \texttt{ROLE\_RIDER}, \texttt{ROLE\_DRIVER}, and \texttt{ROLE\_ADMIN}.
-    \item \textbf{Implementation:} During authentication, the server reads the role from the \texttt{users.dat} file. Every incoming request is then passed through a "Gatekeeper" loop in \texttt{server\_main.c}. I used a \texttt{switch} statement that validates the packet type against the user's role (e.g., a Rider cannot send a \texttt{MSG\_ADMIN\_ACTION} packet). If the validation fails, the server rejects the request immediately.
+    \item Data Structure: I used an enum in structs.h to define ROLE\_RIDER, ROLE\_DRIVER, and ROLE\_ADMIN.
+    \item Implementation: During authentication, the server reads the role from the users.dat file. Every incoming request is then passed through a Gatekeeper loop in server\_main.c. I used a switch statement that validates the packet type against the user's role (e.g., a Rider cannot send a MSG\_ADMIN\_ACTION packet). If the validation fails, the server rejects the request immediately.
 \end{itemize}
 
 \subsection{4.2 File Locking (Advisory Locking)}
-Data persistence in a concurrent system is dangerous without synchronization. I used \textbf{POSIX Advisory Locking} to manage access to the system ledger and user database.
+Data persistence in a concurrent system is dangerous without synchronization. I used POSIX Advisory Locking to manage access to the system ledger and user database.
 \begin{itemize}
-    \item \textbf{The fcntl() Mechanism:} I used the \texttt{struct flock} and \texttt{fcntl()} system call to implement granular locks. 
-    \item \textbf{Write Locks:} In the \texttt{log\_trip()} function, I applied an exclusive \texttt{F\_WRLCK}. This ensures that if ten drivers finish trips at once, the OS serializes their writes to \texttt{trip\_history.txt}, preventing "Lost Updates."
-    \item \textbf{Read/Write Balance:} For the Admin dashboard, I used shared read locks (\texttt{F\_RDLCK}) allowing multiple admins to generate reports simultaneously, but blocking them if a write operation is in progress, thereby preventing "Dirty Reads."
+    \item The fcntl() Mechanism: I used the flock struct and fcntl() system call to implement granular locks. 
+    \item Write Locks: In the log\_trip() function, I applied an exclusive F\_WRLCK. This ensures that if ten drivers finish trips at once, the OS serializes their writes to trip\_history.txt, preventing Lost Updates.
+    \item Read/Write Balance: For the Admin dashboard, I used shared read locks (F\_RDLCK) allowing multiple admins to generate reports simultaneously, but blocking them if a write operation is in progress, thereby preventing Dirty Reads.
 \end{itemize}
 
 \subsection{4.3 Concurrency Control (Threads, Mutexes, and Semaphores)}
 Handling hundreds of simultaneous clients requires sophisticated synchronization to avoid race conditions.
 \begin{itemize}
-    \item \textbf{Thread Management:} I used \texttt{pthread\_create} to spawn a dedicated worker thread for every client connection. I utilized \texttt{pthread\_detach} to ensure that resources are automatically reclaimed by the OS when a user logs out.
-    \item \textbf{Mutexes:} I implemented \texttt{driver\_mutex} to protect the Shared Memory driver grid. Since multiple threads might try to "book" the same driver, the mutex ensures that the search and status-update (Offline to On-Trip) is an atomic operation.
-    \item \textbf{Semaphores:} I used a **POSIX Named Semaphore** (\texttt{sem\_t}) as a thread-safe counter for the global driver pool. This allows the matchmaking logic to instantly know if the "supply" is zero without having to scan the entire grid.
+    \item Thread Management: I used pthread\_create to spawn a dedicated worker thread for every client connection. I utilized pthread\_detach to ensure that resources are automatically reclaimed by the OS when a user logs out.
+    \item Mutexes: I implemented driver\_mutex to protect the Shared Memory driver grid. Since multiple threads might try to book the same driver, the mutex ensures that the search and status-update (Offline to On-Trip) is an atomic operation.
+    \item Semaphores: I used a POSIX Named Semaphore (sem\_t) as a thread-safe counter for the global driver pool. This allows the matchmaking logic to instantly know if the supply is zero without having to scan the entire grid.
 \end{itemize}
 
 \subsection{4.4 Data Consistency}
 Consistency is the cornerstone of any dispatch system. I focused on preventing three major architectural failures:
 \begin{itemize}
-    \item \textbf{Race Conditions:} By using mutexes around the driver matching algorithm, I ensured that a driver can only be assigned to one rider.
-    \item \textbf{Lost Updates:} In the \texttt{handle\_admin\_action} function, I used file locks to ensure that when an admin bans a user, the change is written completely to the disk before any other process can read it.
-    \item \textbf{Dirty Reads:} By using read-locks in the history viewing logic, I ensured that riders never see a trip record that is only partially written to the file.
+    \item Race Conditions: By using mutexes around the driver matching algorithm, I ensured that a driver can only be assigned to one rider.
+    \item Lost Updates: In the handle\_admin\_action function, I used file locks to ensure that when an admin bans a user, the change is written completely to the disk before any other process can read it.
+    \item Dirty Reads: By using read-locks in the history viewing logic, I ensured that riders never see a trip record that is only partially written to the file.
 \end{itemize}
 
 \subsection{4.5 Socket Programming (Network Layer)}
-The system is built on a distributed **TCP Client-Server Architecture**.
+The system is built on a distributed TCP Client-Server Architecture.
 \begin{itemize}
-    \item \textbf{The Server:} I implemented a robust listener in \texttt{server\_main.c} using \texttt{AF\_INET} sockets. I also used \texttt{SO\_REUSEADDR} to allow for immediate server restarts during testing.
-    \item \textbf{Communication Protocol:} I designed a custom binary protocol using the \texttt{MessagePacket} struct. This ensures that the server can parse different request types (Auth, Location, Ride Requests) by simply looking at the packet header, making the network communication extremely efficient.
+    \item The Server: I implemented a robust listener in server\_main.c using AF\_INET sockets. I also used SO\_REUSEADDR to allow for immediate server restarts during testing.
+    \item Communication Protocol: I designed a custom binary protocol using the MessagePacket struct. This ensures that the server can parse different request types (Auth, Location, Ride Requests) by simply looking at the packet header, making the network communication extremely efficient.
 \end{itemize}
 
 \subsection{4.6 Inter-Process Communication (IPC)}
 I utilized two distinct forms of IPC to demonstrate a deep understanding of Operating System memory management:
 \begin{itemize}
-    \item \textbf{Shared Memory:} This is the system's "High-Speed Backbone." I created a shared memory segment for the Driver Grid. This allows the \texttt{surge\_calc} process (an external process) to monitor the server's state in real-time without the latency of socket communication.
-    \item \textbf{Signal Handling:} I implemented \texttt{signal(SIGINT, cleanup\_and\_exit)} to trap terminal interrupts. This ensures that even if the system is forcefully closed, it cleans up all IPC resources (unlinking SHM and Semaphores) to maintain system hygiene.
+    \item Shared Memory: This is the system's High-Speed Backbone. I created a shared memory segment for the Driver Grid. This allows the surge\_calc process (an external process) to monitor the server's state in real-time without the latency of socket communication.
+    \item Signal Handling: I implemented signal(SIGINT, cleanup\_and\_exit) to trap terminal interrupts. This ensures that even if the system is forcefully closed, it cleans up all IPC resources (unlinking SHM and Semaphores) to maintain system hygiene.
 \end{itemize}
 
 \section{System Execution and Output}
@@ -106,7 +106,7 @@ I utilized two distinct forms of IPC to demonstrate a deep understanding of Oper
 The server starts by initializing all IPC resources and opening the port for connections.
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\textwidth]{screenshots/server_init.png}
+    \includegraphics[width=0.8\textwidth]{server_init.png}
     \caption{Main Server bootstrapping IPC and Network Sockets}
 \end{figure}
 
@@ -114,23 +114,23 @@ The server starts by initializing all IPC resources and opening the port for con
 The rider logs in, chooses a destination, and waits for the server to find a nearby driver.
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\textwidth]{screenshots/rider_flow.png}
+    \includegraphics[width=0.8\textwidth]{rider_flow.png}
     \caption{Rider authentication and successful ride matching}
 \end{figure}
 
 \subsection{Driver Ride Offer}
-The driver receives a "Push Notification" through a background listener thread when a ride is offered.
+The driver receives a Push Notification through a background listener thread when a ride is offered.
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\textwidth]{screenshots/driver_offer.png}
+    \includegraphics[width=0.8\textwidth]{driver_offer.png}
     \caption{Background listener catching a ride offer while in menu}
 \end{figure}
 
 \subsection{Administrator Live Grid}
-The admin uses Shared Memory to "spy" on the live status of all drivers across the system.
+The admin uses Shared Memory to spy on the live status of all drivers across the system.
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\textwidth]{screenshots/admin_grid.png}
+    \includegraphics[width=0.8\textwidth]{admin_grid.png}
     \caption{Admin dashboard viewing real-time shared memory grid}
 \end{figure}
 
@@ -138,22 +138,22 @@ The admin uses Shared Memory to "spy" on the live status of all drivers across t
 A standalone IPC process that monitors demand and adjusts fare multipliers dynamically.
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\textwidth]{screenshots/surge_monitor.png}
+    \includegraphics[width=0.8\textwidth]{surge_monitor.png}
     \caption{Surge Pricing Calculator adjusting multipliers in real-time}
 \end{figure}
 
 \section{Challenges Faced and Solutions}
 
 \subsection{Challenge 1: Race Conditions in Driver Matching}
-\textbf{Problem:} During high-load testing, I noticed that two riders could occasionally be matched with the same driver if their requests arrived simultaneously. \\
-\textbf{Solution:} I wrapped the entire "Search-and-Claim" logic in a mutex lock. This made the matchmaking process atomic, meaning the server can only process one rider's search at a time, guaranteeing uniqueness.
+Problem: During high-load testing, I noticed that two riders could occasionally be matched with the same driver if their requests arrived simultaneously. \\
+Solution: I wrapped the entire Search-and-Claim logic in a mutex lock. This made the matchmaking process atomic, meaning the server can only process one rider's search at a time, guaranteeing uniqueness.
 
 \subsection{Challenge 2: Resource Leaks in IPC}
-\textbf{Problem:} If the server was terminated using Ctrl+C, the shared memory and named semaphores persisted in the OS, causing "File Exists" errors on the next run. \\
-\textbf{Solution:} I implemented a \texttt{SIGINT} signal handler that traps the exit signal and calls a cleanup routine to unlink all POSIX IPC resources, ensuring a clean slate for every run.
+Problem: If the server was terminated using Ctrl+C, the shared memory and named semaphores persisted in the OS, causing File Exists errors on the next run. \\
+Solution: I implemented a SIGINT signal handler that traps the exit signal and calls a cleanup routine to unlink all POSIX IPC resources, ensuring a clean slate for every run.
 
 \subsection{Challenge 3: Asynchronous Notifications}
-\textbf{Problem:} Drivers needed to receive ride offers even while they were blocked by a \texttt{scanf()} call in their main menu. \\
-\textbf{Solution:} I implemented a dedicated \textbf{Background Listener Thread} in the driver client. This thread constantly waits for server messages while the main thread handles user input, solving the blocking issue entirely.
+Problem: Drivers needed to receive ride offers even while they were blocked by a scanf() call in their main menu. \\
+Solution: I implemented a dedicated Background Listener Thread in the driver client. This thread constantly waits for server messages while the main thread handles user input, solving the blocking issue entirely.
 
 \end{document}
