@@ -342,8 +342,13 @@ void* handle_client(void* arg) {
 
     while (1) {
         if (recv(client_sock, &packet, sizeof(MessagePacket), 0) <= 0) {
-            if (authenticated && current_user.role == ROLE_DRIVER) {
-                update_driver_status(current_user.user_id, STATUS_OFFLINE, 0, 0);
+            if (authenticated) {
+                printf("User %s (ID: %d) has logged out/disconnected.\n", current_user.username, current_user.user_id);
+                if (current_user.role == ROLE_DRIVER) {
+                    update_driver_status(current_user.user_id, STATUS_OFFLINE, 0, 0);
+                }
+            } else {
+                printf("Anonymous client on Socket %d disconnected.\n", client_sock);
             }
             break;
         }
