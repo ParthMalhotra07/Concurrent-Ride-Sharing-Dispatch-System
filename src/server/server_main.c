@@ -19,6 +19,7 @@
 #define PORT 8080
 #define MAX_PENDING 10
 
+pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
 static SystemGridMap* grid_shm = NULL;
 static sem_t* driver_pool_sem = NULL;
 
@@ -122,21 +123,27 @@ void* handle_client(void* arg) {
                         strcpy(packet.payload, "Account banned.");
                         send(client_sock, &packet, sizeof(MessagePacket), 0);
                         printf("[SERVER] Rejected banned user '%s'.\n", username);
-                    } else if (user_sockets[current_user.user_id] != 0) {
-                        // We check if this user is already logged in elsewhere.
-                        // This prevents multiple people using the same account simultaneously.
-                        packet.type = MSG_ERROR;
-                        strcpy(packet.payload, "Already logged in from another session.");
-                        send(client_sock, &packet, sizeof(MessagePacket), 0);
-                        printf("[SERVER] Rejected duplicate login for '%s'.\n", username);
                     } else {
-                        authenticated = 1;
-                        user_sockets[current_user.user_id] = client_sock;
-                        packet.type = MSG_AUTH_RES;
-                        sprintf(packet.payload, "%d %d", current_user.user_id, current_user.role);
-                        send(client_sock, &packet, sizeof(MessagePacket), 0);
-                        printf("[SERVER] User '%s' (ID: %d, Role: %d) authenticated.\n", 
-                                current_user.username, current_user.user_id, current_user.role);
+                        pthread_mutex_lock(&session_mutex);
+                        int is_logged_in = (user_sockets[current_user.user_id] != 0);
+                        if (is_logged_in) {
+                            pthread_mutex_unlock(&session_mutex);
+                            // We check if this user is already logged in elsewhere.
+                            // This prevents multiple people using the same account simultaneously.
+                            packet.type = MSG_ERROR;
+                            strcpy(packet.payload, "Already logged in from another session.");
+                            send(client_sock, &packet, sizeof(MessagePacket), 0);
+                            printf("[SERVER] Rejected duplicate login for '%s'.\n", username);
+                        } else {
+                            authenticated = 1;
+                            user_sockets[current_user.user_id] = client_sock;
+                            pthread_mutex_unlock(&session_mutex);
+                            packet.type = MSG_AUTH_RES;
+                            sprintf(packet.payload, "%d %d", current_user.user_id, current_user.role);
+                            send(client_sock, &packet, sizeof(MessagePacket), 0);
+                            printf("[SERVER] User '%s' (ID: %d, Role: %d) authenticated.\n", 
+                                    current_user.username, current_user.user_id, current_user.role);
+                        }
                     }
                 } else {
                     packet.type = MSG_ERROR;
@@ -154,7 +161,9 @@ void* handle_client(void* arg) {
         else {
             if (packet.type == MSG_DISCONNECT) {
                 printf("[SERVER] User ID %d cleanly disconnected.\n", current_user.user_id);
+                pthread_mutex_lock(&session_mutex);
                 user_sockets[current_user.user_id] = 0;
+                pthread_mutex_unlock(&session_mutex);
                 if (current_user.role == ROLE_DRIVER) {
                     update_driver_status(current_user.user_id, STATUS_OFFLINE, 0, 0);
                 }
@@ -169,11 +178,15 @@ void* handle_client(void* arg) {
                 }
             }
             else if (packet.type == MSG_RIDE_ACCEPT && current_user.role == ROLE_DRIVER) {
+                pthread_mutex_lock(&session_mutex);
                 user_responses[current_user.user_id] = 1;
+                pthread_mutex_unlock(&session_mutex);
                 printf("[SERVER] Driver %d ACCEPTED the ride.\n", current_user.user_id);
             }
             else if (packet.type == MSG_RIDE_REJECT && current_user.role == ROLE_DRIVER) {
+                pthread_mutex_lock(&session_mutex);
                 user_responses[current_user.user_id] = 2;
+                pthread_mutex_unlock(&session_mutex);
                 printf("[SERVER] Driver %d REJECTED the ride.\n", current_user.user_id);
             }
             else if (packet.type == MSG_RIDE_REQ && current_user.role == ROLE_RIDER) {
@@ -192,22 +205,31 @@ void* handle_client(void* arg) {
                         int driver_id = request_ride(current_user.user_id, sx, sy, exclude_list, exclude_count);
                         
                         if (driver_id != -1) {
+                            pthread_mutex_lock(&session_mutex);
                             int driver_sock = user_sockets[driver_id];
+                            pthread_mutex_unlock(&session_mutex);
 
                             // Send Push Notification OFFER to Driver
                             packet.type = MSG_RIDE_OFFER;
                             sprintf(packet.payload, "%d %d %d %d", sx, sy, dx, dy);
+                            pthread_mutex_lock(&session_mutex);
                             user_responses[driver_id] = 0; // Reset response state
+                            pthread_mutex_unlock(&session_mutex);
                             send(driver_sock, &packet, sizeof(MessagePacket), 0);
                             printf("[SERVER] Sent RIDE_OFFER to Driver %d. Waiting 10s for response...\n", driver_id);
 
                             int wait_time = 0;
-                            while(user_responses[driver_id] == 0 && wait_time < 10) {
+                            int local_resp = 0;
+                            while(wait_time < 10) {
+                                pthread_mutex_lock(&session_mutex);
+                                local_resp = user_responses[driver_id];
+                                pthread_mutex_unlock(&session_mutex);
+                                if (local_resp != 0) break;
                                 sleep(1);
                                 wait_time++;
                             }
 
-                            if (user_responses[driver_id] == 1) {
+                            if (local_resp == 1) {
                                 trip_started = 1;
                                 // Driver ACCEPTED!
                                 packet.type = MSG_RIDE_MATCHED;
@@ -255,6 +277,75 @@ void* handle_client(void* arg) {
                             strcpy(packet.payload, "No drivers available at the moment.");
                             send(client_sock, &packet, sizeof(MessagePacket), 0);
                             break;
+                        }
+                    }
+                }
+            }
+            else if (packet.type == MSG_ADMIN_ACTION) {
+                if (current_user.role != ROLE_ADMIN) {
+                    packet.type = MSG_ERROR;
+                    strcpy(packet.payload, "Access denied: insufficient privileges.");
+                    send(client_sock, &packet, sizeof(MessagePacket), 0);
+                } else {
+                    char target_user[32];
+                    int new_status;
+                    if (sscanf(packet.payload, "%31s %d", target_user, &new_status) == 2) {
+                        int fd = open("data/users.dat", O_RDWR);
+                        if (fd != -1) {
+                            struct flock lock;
+                            memset(&lock, 0, sizeof(lock));
+                            lock.l_type = F_WRLCK;
+                            lock.l_whence = SEEK_SET;
+                            lock.l_start = 0;
+                            lock.l_len = 0;
+                            fcntl(fd, F_SETLKW, &lock);
+
+                            FILE *fp = fdopen(fd, "r");
+                            FILE *ftemp = fopen("data/users_temp.dat", "w");
+                            if (fp && ftemp) {
+                                char line[256];
+                                int found = 0;
+                                rewind(fp);
+                                while (fgets(line, sizeof(line), fp)) {
+                                    int id, role, banned;
+                                    char uname[32], pword[64];
+                                    if (sscanf(line, "%d %31s %63s %d %d", &id, uname, pword, &role, &banned) == 5) {
+                                        if (strcmp(uname, target_user) == 0) {
+                                            fprintf(ftemp, "%d %s %s %d %d\n", id, uname, pword, role, new_status);
+                                            found = 1;
+                                        } else {
+                                            fputs(line, ftemp);
+                                        }
+                                    } else {
+                                        fputs(line, ftemp);
+                                    }
+                                }
+                                fclose(ftemp);
+                                
+                                if (found) {
+                                    rename("data/users_temp.dat", "data/users.dat");
+                                    packet.type = MSG_ADMIN_ACTION;
+                                    sprintf(packet.payload, "Success: User '%s' status updated to %s.", target_user, new_status ? "LOCKED" : "ACTIVE");
+                                } else {
+                                    remove("data/users_temp.dat");
+                                    packet.type = MSG_ERROR;
+                                    sprintf(packet.payload, "Error: User '%s' not found.", target_user);
+                                }
+                            } else {
+                                if (ftemp) fclose(ftemp);
+                                packet.type = MSG_ERROR;
+                                strcpy(packet.payload, "Error processing user database.");
+                            }
+                            
+                            lock.l_type = F_UNLCK;
+                            fcntl(fd, F_SETLK, &lock);
+                            if (fp) fclose(fp); // This also closes fd
+                            
+                            send(client_sock, &packet, sizeof(MessagePacket), 0);
+                        } else {
+                            packet.type = MSG_ERROR;
+                            strcpy(packet.payload, "Error accessing user database.");
+                            send(client_sock, &packet, sizeof(MessagePacket), 0);
                         }
                     }
                 }

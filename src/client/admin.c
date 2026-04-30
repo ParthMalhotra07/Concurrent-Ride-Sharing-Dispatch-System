@@ -178,41 +178,16 @@ int main() {
                     printf("Set Status (0 = ACTIVE, 1 = LOCKED/BANNED): ");
                     if (scanf("%d", &new_status) != 1) break;
                     
-                    FILE *fp = fopen("data/users.dat", "r");
-                    FILE *ftemp = fopen("data/users_temp.dat", "w");
-                    if (!fp || !ftemp) {
-                        printf("Error accessing user database.\n");
-                        if (fp) fclose(fp); 
-                        if (ftemp) fclose(ftemp);
-                        break;
-                    }
+                    packet.type = MSG_ADMIN_ACTION;
+                    sprintf(packet.payload, "%s %d", target_user, new_status);
+                    send(sock, &packet, sizeof(packet), 0);
                     
-                    char line[256];
-                    int found = 0;
-                    while (fgets(line, sizeof(line), fp)) {
-                        int id, role, banned;
-                        char uname[32], pword[64];
-                        if (sscanf(line, "%d %31s %63s %d %d", &id, uname, pword, &role, &banned) == 5) {
-                            if (strcmp(uname, target_user) == 0) {
-                                fprintf(ftemp, "%d %s %s %d %d\n", id, uname, pword, role, new_status);
-                                found = 1;
-                            } else {
-                                fputs(line, ftemp);
-                            }
-                        } else {
-                            fputs(line, ftemp);
-                        }
-                    }
-                    fclose(fp);
-                    fclose(ftemp);
-                    
-                    if (found) {
-                        remove("data/users.dat");
-                        rename("data/users_temp.dat", "data/users.dat");
-                        printf("Success: User '%s' status updated to %s.\n", target_user, new_status ? "LOCKED" : "ACTIVE");
+                    MessagePacket action_res;
+                    recv(sock, &action_res, sizeof(action_res), 0);
+                    if (action_res.type == MSG_ERROR) {
+                        printf("%s\n", action_res.payload);
                     } else {
-                        remove("data/users_temp.dat");
-                        printf("Error: User '%s' not found.\n", target_user);
+                        printf("%s\n", action_res.payload);
                     }
                     break;
                 }

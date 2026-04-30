@@ -43,7 +43,8 @@ typedef enum {
     //9
     MSG_ERROR,
     //10
-    MSG_DISCONNECT
+    MSG_DISCONNECT,
+    MSG_ADMIN_ACTION
 } MessageType;
 
 typedef struct {
