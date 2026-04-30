@@ -7,7 +7,7 @@
 #include "../common/structs.h"
 
 int main() {
-    printf("=== SURGE PRICING CALCULATOR ===\n");
+    printf("Surge Pricing Calculator\n");
     printf("Monitoring Shared Memory Grid...\n");
 
     // This process doesn't talk to the server via sockets. 
@@ -66,24 +66,19 @@ int main() {
 
         // Use standard clear screen for a dashboard feel
         system("clear");
-        printf("==========================================\n");
-        printf("        SURGE PRICING DASHBOARD           \n");
-        printf("==========================================\n\n");
         
-        printf(" LIVE METRICS:\n");
-        printf("  [-] Drivers Available : %d\n", available_drivers);
-        printf("  [-] Drivers On Trip   : %d\n", on_trip_drivers);
-        printf("  [-] Drivers Offline   : %d\n\n", offline_drivers);
+        printf("Live Metrics:\n");
+        printf("  Drivers Available : %d\n", available_drivers);
+        printf("  Drivers On Trip   : %d\n", on_trip_drivers);
+        printf("  Drivers Offline   : %d\n\n", offline_drivers);
         
-        printf("==========================================\n");
         if (surge_multiplier >= 2.0) {
-            printf(" CURRENT SURGE: %.1fx (CRITICAL SHORTAGE!)\n", surge_multiplier);
+            printf("Current Surge: %.1fx (Critical Shortage)\n", surge_multiplier);
         } else if (surge_multiplier > 1.0) {
-            printf(" CURRENT SURGE: %.1fx (ELEVATED DEMAND)\n", surge_multiplier);
+            printf("Current Surge: %.1fx (Elevated Demand)\n", surge_multiplier);
         } else {
-            printf(" CURRENT SURGE: 1.0x (NORMAL CONDITIONS)\n");
+            printf("Current Surge: 1.0x (Normal Conditions)\n");
         }
-        printf("==========================================\n");
         printf("Monitoring Shared Memory Grid instantly...\n");
         fflush(stdout);
 

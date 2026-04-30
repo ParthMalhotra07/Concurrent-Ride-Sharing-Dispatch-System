@@ -32,7 +32,7 @@ int main() {
         return -1;
     }
 
-    printf("=== RIDER CLIENT ===\n");
+    printf("Rider Client\n");
     char username[32], password[64];
     printf("Username: ");
     scanf("%31s", username);
@@ -55,7 +55,7 @@ int main() {
 
         int choice;
         while (1) {
-            printf("\n--- RIDER MENU ---\n");
+            printf("\nRider Menu:\n");
             printf("1. Request a Ride\n");
             printf("2. View My Trip History\n");
             printf("3. Logout & Exit\n");
@@ -86,16 +86,16 @@ int main() {
                     // We wait here for the server to find a driver and send back a match.
                     recv(sock, &res, sizeof(res), 0);
                     if (res.type == MSG_RIDE_MATCHED) {
-                        printf("\n[MATCH FOUND!] Driver ID %s is on the way!\n", res.payload);
+                        printf("Match found! Driver ID %s is on the way.\n", res.payload);
                     } else {
-                        printf("\n[ERROR] %s\n", res.payload);
+                        printf("Error: %s\n", res.payload);
                     }
                     break;
                 }
                 case 2: {
-                    // This function opens the shared ledger file to show the rider 
-                    // a list of all their successfully completed trips.
-                    FILE *fp = fopen("data/ledger.txt", "r");
+                    // This function opens the shared trip history file to show the rider 
+                    // their personal rides using an exclusive read lock
+                    FILE *fp = fopen("data/trip_history.txt", "r");
                     if (!fp) {
                         printf("No trip history available yet.\n");
                         break;
@@ -108,11 +108,11 @@ int main() {
                     lock.l_start = 0;
                     lock.l_len = 0;
                     if (fcntl(fd, F_SETLKW, &lock) == -1) {
-                        perror("Failed to lock ledger");
+                        perror("Failed to lock trip history file");
                         fclose(fp);
                         break;
                     }
-                    printf("\n--- MY TRIP HISTORY ---\n");
+                    printf("\nTrip History:\n");
                     char line[256];
                     int count = 0;
                     while (fgets(line, sizeof(line), fp)) {

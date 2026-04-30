@@ -22,34 +22,21 @@
 //Shared Memory
 
 typedef enum {
-   //0
     MSG_AUTH_REQ, 
-    //1
     MSG_AUTH_RES, 
-    //2
     MSG_LOC_UPDATE, 
-    //3
     MSG_RIDE_REQ, 
-    //4
     MSG_RIDE_MATCHED, 
-    //5
-    MSG_RIDE_END,
-    //6
     MSG_RIDE_OFFER,
-    //7
     MSG_RIDE_ACCEPT,
-    //8
     MSG_RIDE_REJECT,
-    //9
     MSG_ERROR,
-    //10
     MSG_DISCONNECT,
     MSG_ADMIN_ACTION
 } MessageType;
 
 typedef struct {
     MessageType type;
-    int sender_id;      // Unique User ID
     char payload[256];  // CSV or JSON-like simple string, or raw bytes depending on operation
 } MessagePacket;
 

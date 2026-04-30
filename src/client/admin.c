@@ -34,7 +34,7 @@ int main() {
         return -1;
     }
 
-    printf("=== ADMIN CLIENT ===\n");
+    printf("Admin Client\n");
     char username[32], password[64];
     printf("Username: ");
     scanf("%31s", username);
@@ -55,9 +55,9 @@ int main() {
         
         int choice;
         while (1) {
-            printf("\n--- ADMIN DASHBOARD ---\n");
+            printf("\nAdmin Dashboard:\n");
             printf("1. System Status Summary\n");
-            printf("2. View Full Trip Ledger\n");
+            printf("2. View Full Trip History\n");
             printf("3. Financial Summary\n");
             printf("4. Manage User Access (Lock/Unlock)\n");
             printf("5. Logout & Exit\n");
@@ -75,7 +75,7 @@ int main() {
                 case 1: {
                     // We access the global driver grid directly through Shared Memory.
                     // This is faster than network sockets because it avoids kernel overhead.
-                    printf("\n[System View] Fetching Live Grid from Shared Memory...\n");
+                    printf("\nFetching Live Grid from Shared Memory...\n");
                     int shm_fd = shm_open(SHM_NAME, O_RDONLY, 0666);
                     if (shm_fd == -1) {
                         perror("Could not access Shared Memory (Is server running?)");
@@ -83,7 +83,7 @@ int main() {
                     }
                     SystemGridMap* grid_shm = mmap(NULL, SHM_SIZE, PROT_READ, MAP_SHARED, shm_fd, 0);
                     if (grid_shm != MAP_FAILED) {
-                        printf("\n--- CURRENT DRIVER GRID (LIVE) ---\n");
+                        printf("\nCurrent Driver Grid (Live):\n");
                         int count = 0;
                         for (int i = 0; i < MAX_DRIVERS; i++) {
                             if (grid_shm->grid[i].driver_id != 0) {
@@ -96,16 +96,15 @@ int main() {
                             }
                         }
                         if (count == 0) printf("    No drivers currently online.\n");
-                        printf("----------------------------------\n");
                         munmap(grid_shm, SHM_SIZE);
                     }
                     close(shm_fd);
                     break;
                 }
                 case 2: {
-                    FILE *fp = fopen("data/ledger.txt", "r");
+                    FILE *fp = fopen("data/trip_history.txt", "r");
                     if (!fp) {
-                        printf("Ledger file not found.\n");
+                        printf("Trip history file not found.\n");
                         break;
                     }
                     int fd = fileno(fp);
@@ -116,11 +115,11 @@ int main() {
                     lock.l_start = 0;
                     lock.l_len = 0;
                     if (fcntl(fd, F_SETLKW, &lock) == -1) {
-                        perror("Failed to lock ledger");
+                        perror("Failed to lock trip history file");
                         fclose(fp);
                         break;
                     }
-                    printf("\n--- COMPLETE SYSTEM LEDGER ---\n");
+                    printf("\nComplete System Trip History:\n");
                     char line[256];
                     while (fgets(line, sizeof(line), fp)) {
                         printf(" %s", line);
@@ -131,7 +130,7 @@ int main() {
                     break;
                 }
                 case 3: {
-                    FILE *fp = fopen("data/ledger.txt", "r");
+                    FILE *fp = fopen("data/trip_history.txt", "r");
                     if (!fp) {
                         printf("No financial data available.\n");
                         break;
@@ -155,12 +154,11 @@ int main() {
                             total_trips++;
                         }
                     }
-                    printf("\n--- SYSTEM FINANCIAL OVERVIEW ---\n");
+                    printf("\nSystem Financial Overview:\n");
                     printf(" TOTAL TRIPS COMPLETED : %d\n", total_trips);
                     printf(" TOTAL SYSTEM REVENUE  : $%ld\n", total_revenue);
                     if (total_trips > 0)
                         printf(" AVERAGE FARE PER TRIP : $%.2f\n", (double)total_revenue / total_trips);
-                    printf("----------------------------------\n");
 
                     lock.l_type = F_UNLCK;
                     fcntl(fd, F_SETLK, &lock);
@@ -170,7 +168,7 @@ int main() {
                 case 4: {
                     // The Admin can modify user permissions live. This demonstrates 
                     // how the system handles role-based access control.
-                    printf("\n--- MANAGE USER ACCESS ---\n");
+                    printf("\nManage User Access:\n");
                     char target_user[32];
                     int new_status;
                     printf("Enter username to modify: ");

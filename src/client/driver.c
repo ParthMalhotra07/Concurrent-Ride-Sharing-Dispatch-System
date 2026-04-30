@@ -32,11 +32,9 @@ void* server_listener_thread(void* arg) {
         if (res.type == MSG_RIDE_OFFER) {
             int sx, sy, dx, dy;
             sscanf(res.payload, "%d %d %d %d", &sx, &sy, &dx, &dy);
-            printf("\n==========================================\n");
-            printf("  🚨 RIDE OFFER RECEIVED! 🚨\n");
-            printf("  Pickup: (%d, %d)  -->  Dropoff: (%d, %d)\n", sx, sy, dx, dy);
-            printf("  (Type '5' to Accept, '6' to Reject in menu)\n");
-            printf("==========================================\nChoice: ");
+            printf("\nRide Offer Received!\n");
+            printf("Pickup: (%d, %d)  -->  Dropoff: (%d, %d)\n", sx, sy, dx, dy);
+            printf("(Type '5' to Accept, '6' to Reject in menu)\nChoice: ");
             fflush(stdout);
         }
     }
@@ -65,7 +63,7 @@ int main() {
         return -1;
     }
 
-    printf("=== DRIVER CLIENT ===\n");
+    printf("Driver Client\n");
     char username[32], password[64];
     printf("Username: ");
     scanf("%31s", username);
@@ -95,7 +93,7 @@ int main() {
         pthread_detach(listener_thread);
 
         while (1) {
-            printf("\n--- DRIVER MENU ---\n");
+            printf("\nDriver Menu:\n");
             printf("1. Go Online (Available for rides)\n");
             printf("2. Go Offline\n");
             printf("3. Update My Location (x,y)\n");
@@ -147,9 +145,8 @@ int main() {
                     printf("Location updated to (%d, %d)\n", current_x, current_y);
                     break;
                 case 4: {
-                    // This reads the trip ledger file and filters for our driver ID
-                    // to calculate how many trips we've done and how much we've made.
-                    FILE *fp = fopen("data/ledger.txt", "r");
+                    // This reads the trip history file and filters for our driver ID
+                    FILE *fp = fopen("data/trip_history.txt", "r");
                     if (!fp) {
                         printf("No earnings history available yet.\n");
                         break;
@@ -162,11 +159,11 @@ int main() {
                     lock.l_start = 0;
                     lock.l_len = 0;
                     if (fcntl(fd, F_SETLKW, &lock) == -1) {
-                        perror("Failed to lock ledger");
+                        perror("Failed to lock trip history file");
                         fclose(fp);
                         break;
                     }
-                    printf("\n--- MY EARNINGS REPORT ---\n");
+                    printf("\nEarnings Report:\n");
                     char line[256];
                     int total_money = 0;
                     int trip_count = 0;
@@ -180,7 +177,7 @@ int main() {
                             }
                         }
                     }
-                    printf("---------------------------\n");
+
                     printf(" TOTAL TRIPS: %d\n", trip_count);
                     printf(" TOTAL EARNED: $%d\n", total_money);
                     lock.l_type = F_UNLCK;

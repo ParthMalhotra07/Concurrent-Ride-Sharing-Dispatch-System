@@ -12,27 +12,96 @@
 #include <sys/stat.h>
 #include <semaphore.h>
 #include "../common/structs.h"
-#include "auth.h"
-#include "ledger.h"
-#include "match_core.h"
-
 #define PORT 8080
 #define MAX_PENDING 10
+#define USERS_FILE "data/users.dat"
+#define TRIP_HISTORY_FILE "data/trip_history.txt"
 
 pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t driver_mutex = PTHREAD_MUTEX_INITIALIZER;
 static SystemGridMap* grid_shm = NULL;
 static sem_t* driver_pool_sem = NULL;
 
-// Global Socket Mapping for Asynchronous Dispatch
 int user_sockets[2000] = {0};
 volatile int user_responses[2000] = {0}; // 0 = waiting, 1 = accept, 2 = reject
+
+int authenticate_user(const char* username, const char* password, UserRecord* out_user) {
+    FILE *fp = fopen(USERS_FILE, "r");
+    if (!fp) return 0;
+    char line[256];
+    while (fgets(line, sizeof(line), fp)) {
+        UserRecord temp; int role_int;
+        if (sscanf(line, "%d %31s %63s %d %d", &temp.user_id, temp.username, temp.password, &role_int, &temp.is_banned) == 5) {
+            temp.role = (UserRole)role_int;
+            if (strcmp(temp.username, username) == 0 && strcmp(temp.password, password) == 0) {
+                *out_user = temp; fclose(fp); return 1;
+            }
+        }
+    }
+    fclose(fp); return 0;
+}
+
+void log_trip(int rider_id, int driver_id, int sx, int sy, int dx, int dy, int fare) {
+    int fd = open(TRIP_HISTORY_FILE, O_WRONLY | O_APPEND | O_CREAT, 0666);
+    if (fd < 0) return;
+    struct flock lock; memset(&lock, 0, sizeof(lock));
+    lock.l_type = F_WRLCK; lock.l_whence = SEEK_END;
+    fcntl(fd, F_SETLKW, &lock);
+    char entry[256];
+    sprintf(entry, "TRIP %d %d %d %d %d %d %d\n", rider_id, driver_id, sx, sy, dx, dy, fare);
+    write(fd, entry, strlen(entry));
+    lock.l_type = F_UNLCK; fcntl(fd, F_SETLK, &lock); close(fd);
+}
+
+void update_driver_status(int driver_id, DriverStatus status, int x, int y) {
+    pthread_mutex_lock(&driver_mutex);
+    int driver_index = -1;
+    for (int i = 0; i < MAX_DRIVERS; i++) {
+        if (grid_shm->grid[i].driver_id == driver_id || grid_shm->grid[i].status == STATUS_OFFLINE) {
+            driver_index = i; break;
+        }
+    }
+    if (driver_index != -1) {
+        DriverStatus old_status = grid_shm->grid[driver_index].status;
+        grid_shm->grid[driver_index].driver_id = driver_id;
+        grid_shm->grid[driver_index].status = status;
+        grid_shm->grid[driver_index].current_loc.x = x;
+        grid_shm->grid[driver_index].current_loc.y = y;
+        if (old_status != STATUS_AVAILABLE && status == STATUS_AVAILABLE) sem_post(driver_pool_sem);
+    }
+    pthread_mutex_unlock(&driver_mutex);
+}
+
+int request_ride(int rider_id, int rider_x, int rider_y, int* exclude_list, int exclude_count) {
+    printf("Searching for nearest driver for Rider %d...\n", rider_id);
+    if (sem_trywait(driver_pool_sem) != 0) return -1;
+    pthread_mutex_lock(&driver_mutex);
+    int matched_driver = -1; int best_index = -1; double min_dist = 9999999.0;
+    for (int i = 0; i < MAX_DRIVERS; i++) {
+        if (grid_shm->grid[i].status == STATUS_AVAILABLE) {
+            int is_excluded = 0;
+            for (int j = 0; j < exclude_count; j++) {
+                if (grid_shm->grid[i].driver_id == exclude_list[j]) { is_excluded = 1; break; }
+            }
+            if (is_excluded) continue;
+            long long dx = (long long)grid_shm->grid[i].current_loc.x - (long long)rider_x;
+            long long dy = (long long)grid_shm->grid[i].current_loc.y - (long long)rider_y;
+            double dist = (double)(dx * dx) + (double)(dy * dy);
+            if (dist < min_dist) { min_dist = dist; best_index = i; matched_driver = grid_shm->grid[i].driver_id; }
+        }
+    }
+    if (best_index != -1) grid_shm->grid[best_index].status = STATUS_ON_TRIP;
+    pthread_mutex_unlock(&driver_mutex);
+    if (matched_driver == -1) sem_post(driver_pool_sem);
+    return matched_driver;
+}
 
 // This function is triggered when we press Ctrl+C. It's important because it 
 // properly removes the shared memory and semaphores from the system so 
 // the OS doesn't get cluttered with stale resources.
 void cleanup_and_exit(int sig) {
     (void)sig; // Silence unused warning
-    printf("\n[SERVER] Shutting down. Cleaning up IPC resources...\n");
+    printf("Shutting down. Cleaning up IPC resources...\n");
     if (grid_shm != MAP_FAILED && grid_shm != NULL) {
         munmap(grid_shm, SHM_SIZE);
     }
@@ -82,11 +151,10 @@ void setup_ipc() {
         exit(1);
     }
 
-    // 3. Hand pointers over to the matching core
-    init_match_core(grid_shm, driver_pool_sem);
-    init_ledger();
+    // 3. System initialized
+    printf("IPC and Synchronization primitives initialized.\n");
     
-    printf("[SERVER] IPC and Synchronization primitives initialized.\n");
+    printf("IPC and Synchronization primitives initialized.\n");
 }
 
 //function for individually handling each request 
@@ -98,16 +166,16 @@ void* handle_client(void* arg) {
     int authenticated = 0;
     UserRecord current_user;
 
-    printf("[SERVER] Client connected. Waiting for authentication... (Socket: %d)\n", client_sock);
+    printf("Client connected. Waiting for authentication... (Socket: %d)\n", client_sock);
 
     while (1) {
         int bytes_read = recv(client_sock, &packet, sizeof(MessagePacket), 0);
         if (bytes_read <= 0) {
-            printf("[SERVER] Client on socket %d disconnected abruptly.\n", client_sock);
+            printf("Client on socket %d disconnected abruptly.\n", client_sock);
             
             // Vulnerability Fix: The Ghost Driver Cleanup
             if (authenticated && current_user.role == ROLE_DRIVER) {
-                printf("[SERVER] Emergency Cleanup: Offlining Ghost Driver %d\n", current_user.user_id);
+                printf("Emergency Cleanup: Offlining Ghost Driver %d\n", current_user.user_id);
                 update_driver_status(current_user.user_id, STATUS_OFFLINE, 0, 0);
             }
             break;
@@ -122,7 +190,7 @@ void* handle_client(void* arg) {
                         packet.type = MSG_ERROR;
                         strcpy(packet.payload, "Account banned.");
                         send(client_sock, &packet, sizeof(MessagePacket), 0);
-                        printf("[SERVER] Rejected banned user '%s'.\n", username);
+                        printf("Rejected banned user '%s'.\n", username);
                     } else {
                         pthread_mutex_lock(&session_mutex);
                         int is_logged_in = (user_sockets[current_user.user_id] != 0);
@@ -133,7 +201,7 @@ void* handle_client(void* arg) {
                             packet.type = MSG_ERROR;
                             strcpy(packet.payload, "Already logged in from another session.");
                             send(client_sock, &packet, sizeof(MessagePacket), 0);
-                            printf("[SERVER] Rejected duplicate login for '%s'.\n", username);
+                            printf("Rejected duplicate login for '%s'.\n", username);
                         } else {
                             authenticated = 1;
                             user_sockets[current_user.user_id] = client_sock;
@@ -141,7 +209,7 @@ void* handle_client(void* arg) {
                             packet.type = MSG_AUTH_RES;
                             sprintf(packet.payload, "%d %d", current_user.user_id, current_user.role);
                             send(client_sock, &packet, sizeof(MessagePacket), 0);
-                            printf("[SERVER] User '%s' (ID: %d, Role: %d) authenticated.\n", 
+                            printf("User '%s' (ID: %d, Role: %d) authenticated.\n", 
                                     current_user.username, current_user.user_id, current_user.role);
                         }
                     }
@@ -149,7 +217,7 @@ void* handle_client(void* arg) {
                     packet.type = MSG_ERROR;
                     strcpy(packet.payload, "Invalid credentials.");
                     send(client_sock, &packet, sizeof(MessagePacket), 0);
-                    printf("[SERVER] Failed login attempt for '%s'.\n", username);
+                    printf("Failed login attempt for '%s'.\n", username);
                 }
             }
         } 
@@ -160,7 +228,7 @@ void* handle_client(void* arg) {
         }
         else {
             if (packet.type == MSG_DISCONNECT) {
-                printf("[SERVER] User ID %d cleanly disconnected.\n", current_user.user_id);
+                printf("User ID %d cleanly disconnected.\n", current_user.user_id);
                 pthread_mutex_lock(&session_mutex);
                 user_sockets[current_user.user_id] = 0;
                 pthread_mutex_unlock(&session_mutex);
@@ -173,7 +241,7 @@ void* handle_client(void* arg) {
                 int status, x, y;
                 if (sscanf(packet.payload, "%d %d %d", &status, &x, &y) == 3) {
                     update_driver_status(current_user.user_id, (DriverStatus)status, x, y);
-                    printf("[SERVER] Driver %d updated status to %d at (%d,%d)\n", 
+                    printf("Driver %d updated status to %d at (%d,%d)\n", 
                             current_user.user_id, status, x, y);
                 }
             }
@@ -181,13 +249,13 @@ void* handle_client(void* arg) {
                 pthread_mutex_lock(&session_mutex);
                 user_responses[current_user.user_id] = 1;
                 pthread_mutex_unlock(&session_mutex);
-                printf("[SERVER] Driver %d ACCEPTED the ride.\n", current_user.user_id);
+                printf("Driver %d ACCEPTED the ride.\n", current_user.user_id);
             }
             else if (packet.type == MSG_RIDE_REJECT && current_user.role == ROLE_DRIVER) {
                 pthread_mutex_lock(&session_mutex);
                 user_responses[current_user.user_id] = 2;
                 pthread_mutex_unlock(&session_mutex);
-                printf("[SERVER] Driver %d REJECTED the ride.\n", current_user.user_id);
+                printf("Driver %d REJECTED the ride.\n", current_user.user_id);
             }
             else if (packet.type == MSG_RIDE_REQ && current_user.role == ROLE_RIDER) {
                 int sx, sy, dx, dy;
@@ -216,7 +284,7 @@ void* handle_client(void* arg) {
                             user_responses[driver_id] = 0; // Reset response state
                             pthread_mutex_unlock(&session_mutex);
                             send(driver_sock, &packet, sizeof(MessagePacket), 0);
-                            printf("[SERVER] Sent RIDE_OFFER to Driver %d. Waiting 10s for response...\n", driver_id);
+                            printf("Sent RIDE_OFFER to Driver %d. Waiting 10s for response...\n", driver_id);
 
                             int wait_time = 0;
                             int local_resp = 0;
@@ -236,7 +304,7 @@ void* handle_client(void* arg) {
                                 sprintf(packet.payload, "%d", driver_id);
                                 send(client_sock, &packet, sizeof(MessagePacket), 0);
                                 
-                                printf("[SERVER] Driver %d ACCEPTED. Simulating trip from (%d,%d) to (%d,%d)...\n", 
+                                printf("Driver %d ACCEPTED. Simulating trip from (%d,%d) to (%d,%d)...\n", 
                                         driver_id, sx, sy, dx, dy);
                                 sleep(5); // Shorter simulated trip
                                 
@@ -259,7 +327,7 @@ void* handle_client(void* arg) {
                                 }
 
                                 int final_fare = (int)(base_fare * current_surge);
-                                printf("[SERVER] Trip finished! Rider %d reached destination.\n", current_user.user_id);
+                                printf("Trip finished! Rider %d reached destination.\n", current_user.user_id);
                                 printf("         Distance: %d blocks | Base: $%d | Surge: %.1fx | FINAL CHARGE: $%d\n", 
                                         distance_blocks, base_fare, current_surge, final_fare);
                                 
@@ -267,7 +335,7 @@ void* handle_client(void* arg) {
                                 update_driver_status(driver_id, STATUS_AVAILABLE, dx, dy);
                             } else {
                                 // Driver REJECTED or TIMEOUT
-                                printf("[SERVER] Driver %d REJECTED or TIMEOUT. Trying next driver...\n", driver_id);
+                                printf("Driver %d REJECTED or TIMEOUT. Trying next driver...\n", driver_id);
                                 // Put driver back in pool so they can be matched again (or go offline)
                                 update_driver_status(driver_id, STATUS_AVAILABLE, sx, sy);
                                 exclude_list[exclude_count++] = driver_id;
@@ -391,10 +459,8 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    printf("==========================================\n");
-    printf(" Ride-Sharing Dispatch Server started!\n");
-    printf(" Listening on port %d...\n", PORT);
-    printf("==========================================\n");
+    printf("Ride-Sharing Dispatch Server started!\n");
+    printf("Listening on port %d...\n", PORT);
 
     while (1) {
         //infinte loop waiting for rider or driver to connectwith the server via message received 

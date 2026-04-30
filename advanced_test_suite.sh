@@ -139,15 +139,15 @@ fi
 # -----------------
 # TEST 6: File Locking (fcntl) & Teardown
 # -----------------
-echo -e "\nRunning Test 6: Ledger File Locking & Teardown..."
+echo -e "\nRunning Test 6: Trip History File Locking & Teardown..."
 echo "Waiting 15 seconds for strictly simulated trip block to complete..."
 sleep 16
 
-LEDGER_LINES=$(wc -l < data/ledger.txt)
-if [ "$LEDGER_LINES" -ge 1 ] && grep -q "^TRIP" data/ledger.txt; then
-    pass "fcntl locking successful. Ledger appended data cleanly."
+HISTORY_LINES=$(wc -l < data/trip_history.txt)
+if [ "$HISTORY_LINES" -ge 1 ] && grep -q "^TRIP" data/trip_history.txt; then
+    pass "fcntl locking successful. Trip history appended data cleanly."
 else
-    fail "Ledger was corrupted or empty."
+    fail "Trip history was corrupted or empty."
 fi
 
 # Graceful POSIX SIGINT
