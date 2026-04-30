@@ -151,7 +151,7 @@ void handle_auth_req(int client_sock, MessagePacket* packet, int* authenticated,
                 packet->type = MSG_ERROR; 
                 strcpy(packet->payload, "Account banned.");
                 send(client_sock, packet, sizeof(MessagePacket), 0);
-                printf("[AUTH] Rejected banned user '%s'.\n", username);
+                printf("Rejected banned user: %s\n", username);
             } else {
                 pthread_mutex_lock(&session_mutex);
                 if (user_sockets[current_user->user_id] != 0) {
@@ -241,7 +241,7 @@ void handle_ride_request(int client_sock, MessagePacket* packet, UserRecord* cur
                 int final_fare = (int)(base_fare * surge);
                 log_trip(current_user->user_id, driver_id, sx, sy, dx, dy, final_fare);
                 update_driver_status(driver_id, STATUS_AVAILABLE, dx, dy);
-                printf("[TRIP] Trip finished for Rider %d. Fare: $%d\n", current_user->user_id, final_fare);
+                printf("Trip complete for Rider %d. Fare: $%d\n", current_user->user_id, final_fare);
             } else {
                 update_driver_status(driver_id, STATUS_AVAILABLE, sx, sy);
                 exclude_list[exclude_count++] = driver_id;
@@ -305,7 +305,7 @@ void handle_admin_action(int client_sock, MessagePacket* packet) {
 */
 void cleanup_and_exit(int sig) {
     (void)sig; 
-    printf("\n[SYSTEM] Shutting down. Cleaning up IPC resources...\n");
+    printf("Stopping server and cleaning up...\n");
     if (grid_shm) munmap(grid_shm, SHM_SIZE);
     shm_unlink(SHM_NAME); 
     sem_unlink(SEM_POOL_NAME); 
@@ -325,7 +325,7 @@ void setup_ipc() {
     }
     sem_unlink(SEM_POOL_NAME);
     driver_pool_sem = sem_open(SEM_POOL_NAME, O_CREAT, 0666, 0);
-    printf("[SYSTEM] IPC and Synchronization primitives initialized.\n");
+    printf("System memory and locks ready.\n");
 }
 
 /*
@@ -338,17 +338,17 @@ void* handle_client(void* arg) {
     MessagePacket packet; 
     int authenticated = 0; 
     UserRecord current_user;
-    printf("[NET] New client connected on Socket %d.\n", client_sock);
+    printf("New client connected on socket %d.\n", client_sock);
 
     while (1) {
         if (recv(client_sock, &packet, sizeof(MessagePacket), 0) <= 0) {
             if (authenticated) {
-                printf("[LOGOUT] User %s (ID: %d) disconnected.\n", current_user.username, current_user.user_id);
+                printf("User %s (ID: %d) logged out.\n", current_user.username, current_user.user_id);
                 if (current_user.role == ROLE_DRIVER) {
                     update_driver_status(current_user.user_id, STATUS_OFFLINE, 0, 0);
                 }
             } else {
-                printf("[NET] Anonymous client on Socket %d disconnected.\n", client_sock);
+                printf("Client on socket %d disconnected.\n", client_sock);
             }
             break;
         }
@@ -427,8 +427,7 @@ int main() {
     bind(server_sock, (struct sockaddr*)&addr, sizeof(addr));
     listen(server_sock, MAX_PENDING);
     
-    printf("[SYSTEM] Server is up and running on port %d.\n", PORT);
-    printf("--------------------------------------------\n");
+    printf("Server listening on port %d...\n", PORT);
     while (1) {
         int* csock = malloc(sizeof(int));
         *csock = accept(server_sock, NULL, NULL);
