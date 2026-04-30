@@ -11,15 +11,17 @@
 #define SERVER_IP "127.0.0.1"
 #define PORT 8080
 
-// Global variables for the Listener Thread
+// Global variables for the background listener thread
 int global_sock;
 int is_online = 0;
 int current_x = 0;
 int current_y = 0;
 
-// This thread runs in the background to listen for messages from the server.
-// It's mainly here to catch "Ride Offers" that the server pushes to us 
-// even while we are sitting in the main menu.
+/* 
+   This thread runs in the background. It's needed because the driver might 
+   be sitting at the menu when the server suddenly sends a "Ride Offer".
+   It handles catching those incoming push messages.
+*/
 void* server_listener_thread(void* arg) {
     (void)arg;
     MessagePacket res;
@@ -29,18 +31,24 @@ void* server_listener_thread(void* arg) {
             printf("\n[Disconnected from server]\n");
             exit(0);
         }
+        // If the server sends a ride offer, we print it to the screen
         if (res.type == MSG_RIDE_OFFER) {
             int sx, sy, dx, dy;
             sscanf(res.payload, "%d %d %d %d", &sx, &sy, &dx, &dy);
-            printf("\nRide Offer Received!\n");
-            printf("Pickup: (%d, %d)  -->  Dropoff: (%d, %d)\n", sx, sy, dx, dy);
-            printf("(Type '5' to Accept, '6' to Reject in menu)\nChoice: ");
+            printf("\n!!! New Ride Request !!!\n");
+            printf(" From: (%d, %d)  To: (%d, %d)\n", sx, sy, dx, dy);
+            printf(" Go to menu and choose '5' to Accept or '6' to Reject.\n");
+            printf("Choice: ");
             fflush(stdout);
         }
     }
     return NULL;
 }
 
+/* 
+   Main driver program. It handles the UI, login, and sending status updates
+   to the server like our current location or if we are online/offline.
+*/
 int main() {
     int sock;
     struct sockaddr_in server_addr;
@@ -54,7 +62,7 @@ int main() {
     server_addr.sin_port = htons(PORT);
     
     if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) <= 0) {
-        perror("Invalid address/ Address not supported");
+        perror("Invalid address");
         return -1;
     }
 
@@ -63,17 +71,17 @@ int main() {
         return -1;
     }
 
-    printf("Driver Client\n");
+    printf("--- Welcome to the Ride-Sharing System (Driver) ---\n");
     char username[32], password[64];
     printf("Username: ");
     scanf("%31s", username);
     printf("Password: ");
     scanf("%63s", password);
 
+    // Send auth request to the server
     MessagePacket packet;
     packet.type = MSG_AUTH_REQ;
     sprintf(packet.payload, "%s %s", username, password);
-    
     send(sock, &packet, sizeof(packet), 0);
 
     MessagePacket res;
@@ -82,30 +90,29 @@ int main() {
     if (res.type == MSG_AUTH_RES) {
         int my_id;
         sscanf(res.payload, "%d", &my_id);
-        printf("Successfully authenticated as Driver (ID: %d)!\n", my_id);
+        printf("Logged in as Driver ID: %d\n", my_id);
 
-        int choice;
-        
         global_sock = sock;
         pthread_t listener_thread;
         
+        // Start the thread that listens for "Push" notifications from the server
         pthread_create(&listener_thread, NULL, server_listener_thread, NULL);
         pthread_detach(listener_thread);
 
+        int choice;
         while (1) {
             printf("\nDriver Menu:\n");
-            printf("1. Go Online (Available for rides)\n");
+            printf("1. Go Online\n");
             printf("2. Go Offline\n");
-            printf("3. Update My Location (x,y)\n");
+            printf("3. Update Location (X,Y)\n");
             printf("4. View My Earnings\n");
-            printf("5. Accept Pending Ride Offer\n");
-            printf("6. Reject Pending Ride Offer\n");
-            printf("7. Logout & Exit\n");
+            printf("5. Accept Last Offer\n");
+            printf("6. Reject Last Offer\n");
+            printf("7. Exit\n");
             printf("Choice: ");
             if (scanf("%d", &choice) != 1) break;
 
             if (choice == 7) {
-                is_online = 0;
                 packet.type = MSG_DISCONNECT;
                 strcpy(packet.payload, "Bye");
                 send(sock, &packet, sizeof(packet), 0);
@@ -114,72 +121,56 @@ int main() {
 
             switch (choice) {
                 case 1:
-                    // When the driver goes online, we notify the server so we 
-                    // can start receiving ride requests.
                     is_online = 1;
                     packet.type = MSG_LOC_UPDATE;
                     sprintf(packet.payload, "%d %d %d", STATUS_AVAILABLE, current_x, current_y);
                     send(sock, &packet, sizeof(packet), 0);
-                    printf("Status set to: AVAILABLE.\n");
+                    printf("Status: ONLINE (Available for rides)\n");
                     break;
                 case 2:
-                    // Going offline tells the server to stop sending us rides.
                     is_online = 0;
                     packet.type = MSG_LOC_UPDATE;
                     sprintf(packet.payload, "%d %d %d", STATUS_OFFLINE, current_x, current_y);
                     send(sock, &packet, sizeof(packet), 0);
-                    printf("Status set to: OFFLINE.\n");
+                    printf("Status: OFFLINE\n");
                     break;
                 case 3:
-                    // We send our new coordinates to the server so it can 
-                    // calculate the distance when a rider makes a request.
-                    printf("Enter new X Y (e.g. 5 10): ");
-                    if (scanf("%d %d", &current_x, &current_y) != 2) {
-                        printf("Invalid input! Please enter numbers only.\n");
-                        int c; while ((c = getchar()) != '\n' && c != EOF); // Clear bad buffer
-                        break;
-                    }
+                    printf("Enter new X and Y: ");
+                    scanf("%d %d", &current_x, &current_y);
                     packet.type = MSG_LOC_UPDATE;
                     sprintf(packet.payload, "%d %d %d", is_online ? STATUS_AVAILABLE : STATUS_OFFLINE, current_x, current_y);
                     send(sock, &packet, sizeof(packet), 0);
-                    printf("Location updated to (%d, %d)\n", current_x, current_y);
+                    printf("New Location: (%d, %d)\n", current_x, current_y);
                     break;
                 case 4: {
-                    // This reads the trip history file and filters for our driver ID
+                    /* 
+                       Read the common trip history file and calculate how much money 
+                       this specific driver has earned.
+                    */
                     FILE *fp = fopen("data/trip_history.txt", "r");
                     if (!fp) {
-                        printf("No earnings history available yet.\n");
+                        printf("No trip history found.\n");
                         break;
                     }
                     int fd = fileno(fp);
                     struct flock lock;
                     memset(&lock, 0, sizeof(lock));
                     lock.l_type = F_RDLCK;
-                    lock.l_whence = SEEK_SET;
-                    lock.l_start = 0;
-                    lock.l_len = 0;
-                    if (fcntl(fd, F_SETLKW, &lock) == -1) {
-                        perror("Failed to lock trip history file");
-                        fclose(fp);
-                        break;
-                    }
-                    printf("\nEarnings Report:\n");
+                    fcntl(fd, F_SETLKW, &lock);
+                    
+                    printf("\n--- My Earnings ---\n");
                     char line[256];
-                    int total_money = 0;
-                    int trip_count = 0;
+                    int total = 0;
                     while (fgets(line, sizeof(line), fp)) {
                         int r_id, d_id, sx, sy, ex, ey, fare;
                         if (sscanf(line, "TRIP %d %d %d %d %d %d %d", &r_id, &d_id, &sx, &sy, &ex, &ey, &fare) == 7) {
                             if (d_id == my_id) {
-                                printf(" -> Trip: From (%d,%d) to (%d,%d) | Fare: $%d\n", sx, sy, ex, ey, fare);
-                                total_money += fare;
-                                trip_count++;
+                                printf(" -> Trip From (%d,%d) | Earned: $%d\n", sx, sy, fare);
+                                total += fare;
                             }
                         }
                     }
-
-                    printf(" TOTAL TRIPS: %d\n", trip_count);
-                    printf(" TOTAL EARNED: $%d\n", total_money);
+                    printf(" TOTAL EARNINGS: $%d\n", total);
                     lock.l_type = F_UNLCK;
                     fcntl(fd, F_SETLK, &lock);
                     fclose(fp);
@@ -189,20 +180,20 @@ int main() {
                     packet.type = MSG_RIDE_ACCEPT;
                     strcpy(packet.payload, "Accepted");
                     send(sock, &packet, sizeof(packet), 0);
-                    printf("Ride Offer ACCEPTED!\n");
+                    printf("You accepted the ride!\n");
                     break;
                 case 6:
                     packet.type = MSG_RIDE_REJECT;
                     strcpy(packet.payload, "Rejected");
                     send(sock, &packet, sizeof(packet), 0);
-                    printf("Ride Offer REJECTED!\n");
+                    printf("You rejected the ride.\n");
                     break;
                 default:
-                    printf("Invalid choice.\n");
+                    printf("Invalid option.\n");
             }
         }
     } else {
-        printf("Authentication failed: %s\n", res.payload);
+        printf("Auth failed: %s\n", res.payload);
     }
 
     close(sock);

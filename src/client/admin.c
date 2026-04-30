@@ -12,6 +12,10 @@
 #define SERVER_IP "127.0.0.1"
 #define PORT 8080
 
+/* 
+   This is the admin program. It has special powers like viewing the 
+   global driver grid through shared memory and locking/unlocking user accounts.
+*/
 int main() {
     int sock;
     struct sockaddr_in server_addr;
@@ -25,7 +29,7 @@ int main() {
     server_addr.sin_port = htons(PORT);
     
     if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) <= 0) {
-        perror("Invalid address/ Address not supported");
+        perror("Invalid address");
         return -1;
     }
 
@@ -34,7 +38,7 @@ int main() {
         return -1;
     }
 
-    printf("Admin Client\n");
+    printf("--- Administrative Dashboard ---\n");
     char username[32], password[64];
     printf("Username: ");
     scanf("%31s", username);
@@ -44,23 +48,22 @@ int main() {
     MessagePacket packet;
     packet.type = MSG_AUTH_REQ;
     sprintf(packet.payload, "%s %s", username, password);
-    
     send(sock, &packet, sizeof(packet), 0);
 
     MessagePacket res;
     recv(sock, &res, sizeof(res), 0);
 
     if (res.type == MSG_AUTH_RES) {
-        printf("Successfully authenticated as Administrator!\n");
+        printf("Access Granted: Admin logged in.\n");
         
         int choice;
         while (1) {
-            printf("\nAdmin Dashboard:\n");
-            printf("1. System Status Summary\n");
-            printf("2. View Full Trip History\n");
-            printf("3. Financial Summary\n");
-            printf("4. Manage User Access (Lock/Unlock)\n");
-            printf("5. Logout & Exit\n");
+            printf("\nAdmin Menu:\n");
+            printf("1. View Live Driver Grid\n");
+            printf("2. View All Trip Records\n");
+            printf("3. Calculate Total Earnings\n");
+            printf("4. Lock/Unlock a User Account\n");
+            printf("5. Exit\n");
             printf("Choice: ");
             if (scanf("%d", &choice) != 1) break;
 
@@ -73,21 +76,22 @@ int main() {
 
             switch (choice) {
                 case 1: {
-                    // We access the global driver grid directly through Shared Memory.
-                    // This is faster than network sockets because it avoids kernel overhead.
-                    printf("\nFetching Live Grid from Shared Memory...\n");
+                    /* 
+                       Admins can "spy" on the shared memory grid to see every 
+                       driver's status and location in real-time.
+                    */
                     int shm_fd = shm_open(SHM_NAME, O_RDONLY, 0666);
                     if (shm_fd == -1) {
-                        perror("Could not access Shared Memory (Is server running?)");
+                        printf("Error: Could not open shared memory.\n");
                         break;
                     }
                     SystemGridMap* grid_shm = mmap(NULL, SHM_SIZE, PROT_READ, MAP_SHARED, shm_fd, 0);
                     if (grid_shm != MAP_FAILED) {
-                        printf("\nCurrent Driver Grid (Live):\n");
+                        printf("\n--- Global Driver Grid ---\n");
                         int count = 0;
                         for (int i = 0; i < MAX_DRIVERS; i++) {
                             if (grid_shm->grid[i].driver_id != 0) {
-                                printf(" -> Driver ID %d | Status: %d | Location: (%d, %d)\n", 
+                                printf(" ID %d | Status: %d | At: (%d, %d)\n", 
                                         grid_shm->grid[i].driver_id, 
                                         grid_shm->grid[i].status, 
                                         grid_shm->grid[i].current_loc.x, 
@@ -95,55 +99,34 @@ int main() {
                                 count++;
                             }
                         }
-                        if (count == 0) printf("    No drivers currently online.\n");
+                        if (count == 0) printf("    Grid is currently empty.\n");
                         munmap(grid_shm, SHM_SIZE);
                     }
                     close(shm_fd);
                     break;
                 }
                 case 2: {
+                    // Show every single line in the trip history text file
                     FILE *fp = fopen("data/trip_history.txt", "r");
                     if (!fp) {
-                        printf("Trip history file not found.\n");
+                        printf("History file is missing.\n");
                         break;
                     }
-                    int fd = fileno(fp);
-                    struct flock lock;
-                    memset(&lock, 0, sizeof(lock));
-                    lock.l_type = F_RDLCK;
-                    lock.l_whence = SEEK_SET;
-                    lock.l_start = 0;
-                    lock.l_len = 0;
-                    if (fcntl(fd, F_SETLKW, &lock) == -1) {
-                        perror("Failed to lock trip history file");
-                        fclose(fp);
-                        break;
-                    }
-                    printf("\nComplete System Trip History:\n");
+                    printf("\n--- Full System History ---\n");
                     char line[256];
                     while (fgets(line, sizeof(line), fp)) {
                         printf(" %s", line);
                     }
-                    lock.l_type = F_UNLCK;
-                    fcntl(fd, F_SETLK, &lock);
                     fclose(fp);
                     break;
                 }
                 case 3: {
+                    // Summarize all earnings from all drivers in the system
                     FILE *fp = fopen("data/trip_history.txt", "r");
                     if (!fp) {
-                        printf("No financial data available.\n");
+                        printf("No financial data found.\n");
                         break;
                     }
-                    int fd = fileno(fp);
-                    struct flock lock;
-                    memset(&lock, 0, sizeof(lock));
-                    lock.l_type = F_RDLCK;
-                    lock.l_whence = SEEK_SET;
-                    lock.l_start = 0;
-                    lock.l_len = 0;
-                    fcntl(fd, F_SETLKW, &lock);
-
                     long total_revenue = 0;
                     int total_trips = 0;
                     char line[256];
@@ -154,27 +137,23 @@ int main() {
                             total_trips++;
                         }
                     }
-                    printf("\nSystem Financial Overview:\n");
-                    printf(" TOTAL TRIPS COMPLETED : %d\n", total_trips);
-                    printf(" TOTAL SYSTEM REVENUE  : $%ld\n", total_revenue);
-                    if (total_trips > 0)
-                        printf(" AVERAGE FARE PER TRIP : $%.2f\n", (double)total_revenue / total_trips);
-
-                    lock.l_type = F_UNLCK;
-                    fcntl(fd, F_SETLK, &lock);
+                    printf("\n--- Finance Report ---\n");
+                    printf(" Total Trips: %d\n", total_trips);
+                    printf(" Total Revenue: $%ld\n", total_revenue);
                     fclose(fp);
                     break;
                 }
                 case 4: {
-                    // The Admin can modify user permissions live. This demonstrates 
-                    // how the system handles role-based access control.
-                    printf("\nManage User Access:\n");
+                    /* 
+                       Tell the server to modify the users.dat file to ban 
+                       or unban a specific username.
+                    */
                     char target_user[32];
                     int new_status;
-                    printf("Enter username to modify: ");
+                    printf("Target Username: ");
                     scanf("%31s", target_user);
-                    printf("Set Status (0 = ACTIVE, 1 = LOCKED/BANNED): ");
-                    if (scanf("%d", &new_status) != 1) break;
+                    printf("Set Status (0=Active, 1=Banned): ");
+                    scanf("%d", &new_status);
                     
                     packet.type = MSG_ADMIN_ACTION;
                     sprintf(packet.payload, "%s %d", target_user, new_status);
@@ -182,19 +161,15 @@ int main() {
                     
                     MessagePacket action_res;
                     recv(sock, &action_res, sizeof(action_res), 0);
-                    if (action_res.type == MSG_ERROR) {
-                        printf("%s\n", action_res.payload);
-                    } else {
-                        printf("%s\n", action_res.payload);
-                    }
+                    printf("Server result: %s\n", action_res.payload);
                     break;
                 }
                 default:
-                    printf("Invalid choice.\n");
+                    printf("Invalid option.\n");
             }
         }
     } else {
-        printf("Authentication failed: %s\n", res.payload);
+        printf("Access Denied: %s\n", res.payload);
     }
 
     close(sock);

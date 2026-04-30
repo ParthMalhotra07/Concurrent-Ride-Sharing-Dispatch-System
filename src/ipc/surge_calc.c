@@ -6,25 +6,29 @@
 #include <sys/stat.h>
 #include "../common/structs.h"
 
+/* 
+   This process acts like a separate monitoring tool. It reads the shared memory 
+   grid to see how many drivers are busy and then calculates a price multiplier.
+*/
 int main() {
     printf("Surge Pricing Calculator\n");
     printf("Monitoring Shared Memory Grid...\n");
 
-    // The surge pricing calculator monitors the shared memory segment directly
-    // to observe driver availability and calculate multipliers in real-time.
+    // Open the shared memory created by the server
     int shm_fd = shm_open(SHM_NAME, O_RDONLY, 0666);
     if (shm_fd == -1) {
-        perror("shm_open failed! Is the server running?");
+        perror("shm_open failed! Make sure the server is already running.");
         return 1;
     }
 
+    // Map the grid into our address space so we can read it
     SystemGridMap* grid_shm = mmap(NULL, SHM_SIZE, PROT_READ, MAP_SHARED, shm_fd, 0);
     if (grid_shm == MAP_FAILED) {
         perror("mmap failed");
         return 1;
     }
 
-    // Initialize the two-way street for the Server
+    // We also create another shared memory segment to send the multiplier back to the server
     int surge_fd = shm_open(SURGE_SHM_NAME, O_CREAT | O_RDWR, 0666);
     ftruncate(surge_fd, sizeof(SurgeState));
     SurgeState* surge_shm = mmap(NULL, sizeof(SurgeState), PROT_READ | PROT_WRITE, MAP_SHARED, surge_fd, 0);
@@ -37,6 +41,7 @@ int main() {
         int on_trip_drivers = 0;
         int offline_drivers = 0;
         
+        // Loop through the whole grid to count the status of every driver
         for (int i = 0; i < MAX_DRIVERS; i++) {
             if (grid_shm->grid[i].status == STATUS_AVAILABLE) {
                 available_drivers++;
@@ -47,8 +52,10 @@ int main() {
             }
         }
 
-        // Simple supply-and-demand logic: if there are no drivers left, 
-        // we spike the price. If only a few are left, we raise it slightly.
+        /* 
+           Simple supply-and-demand logic: if there are no drivers left, we spike 
+           the price. If only a few are left, we raise it slightly to 1.5x.
+        */
         float surge_multiplier = 1.0;
         if (available_drivers == 0 && on_trip_drivers > 0) {
             surge_multiplier = 2.5;
@@ -58,34 +65,30 @@ int main() {
             surge_multiplier = 1.0;
         }
 
-        // Write to Shared Memory for the Server to see!
+        // Save the multiplier in the shared memory so the server can read it when a trip ends
         if (surge_shm != MAP_FAILED) {
             surge_shm->multiplier = (double)surge_multiplier;
         }
 
-        // Use standard clear screen for a dashboard feel
+        // Clear the screen to make a nice live dashboard in the terminal
         system("clear");
         
-        printf("Live Metrics:\n");
+        printf("System Status Dashboard:\n");
         printf("  Drivers Available : %d\n", available_drivers);
         printf("  Drivers On Trip   : %d\n", on_trip_drivers);
         printf("  Drivers Offline   : %d\n\n", offline_drivers);
         
         if (surge_multiplier >= 2.0) {
-            printf("Current Surge: %.1fx (Critical Shortage)\n", surge_multiplier);
+            printf("Current Surge: %.1fx (High Demand!)\n", surge_multiplier);
         } else if (surge_multiplier > 1.0) {
-            printf("Current Surge: %.1fx (Elevated Demand)\n", surge_multiplier);
+            printf("Current Surge: %.1fx (Busy)\n", surge_multiplier);
         } else {
-            printf("Current Surge: 1.0x (Normal Conditions)\n");
+            printf("Current Surge: 1.0x (Normal)\n");
         }
-        printf("Monitoring Shared Memory Grid instantly...\n");
+        
         fflush(stdout);
-
         sleep(2);
     }
 
-    // Cleanup (unreachable in infinite loop but good practice)
-    munmap(grid_shm, SHM_SIZE);
-    close(shm_fd);
     return 0;
 }
