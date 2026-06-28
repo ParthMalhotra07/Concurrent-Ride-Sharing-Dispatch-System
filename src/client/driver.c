@@ -25,6 +25,8 @@ int is_online = 0;
 int current_x = 0;
 int current_y = 0;
 int pending_offer = 0;
+volatile int viewing_earnings = 0;
+volatile int total_earnings = 0;
 
 void* server_listener_thread(void* arg) {
     (void)arg;
@@ -44,6 +46,30 @@ void* server_listener_thread(void* arg) {
             printf(" Go to menu and choose '5' to Accept or '6' to Reject.\n");
             printf("Choice: " C_RESET);
             fflush(stdout);
+        } else if (res.type == MSG_TRIP_COMPLETED) {
+            int nx, ny;
+            if (sscanf(res.payload, "%d %d", &nx, &ny) == 2) {
+                current_x = nx;
+                current_y = ny;
+                printf(C_GREEN "\n[Trip Completed! Your location has been updated to (%d, %d)]\n" C_RESET, current_x, current_y);
+                printf("Choice: ");
+                fflush(stdout);
+            }
+        } else if (res.type == MSG_TRIP_HISTORY_RES) {
+            if (viewing_earnings) {
+                int r_id, d_id, sx, sy, ex, ey, fare;
+                if (sscanf(res.payload, "%d %d %d %d %d %d %d", &r_id, &d_id, &sx, &sy, &ex, &ey, &fare) == 7) {
+                    printf("  Ride: Rider %d from (%d,%d) to (%d,%d) | Fare: " C_GREEN "$%d" C_RESET "\n", r_id, sx, sy, ex, ey, fare);
+                    total_earnings += fare;
+                    fflush(stdout);
+                }
+            }
+        } else if (res.type == MSG_TRIP_HISTORY_END) {
+            if (viewing_earnings) {
+                printf(C_CYAN "Total Earnings: " C_GREEN "$%d" C_RESET "\n", total_earnings);
+                viewing_earnings = 0;
+                fflush(stdout);
+            }
         }
     }
     return NULL;
@@ -145,20 +171,15 @@ int main() {
                     // Fetch history via sockets safely!
                     packet.type = MSG_TRIP_HISTORY_REQ;
                     packet.payload[0] = '\0';
+                    total_earnings = 0;
+                    viewing_earnings = 1;
                     send(sock, &packet, sizeof(packet), 0);
                     
                     printf(C_CYAN "\n--- My Earnings ---" C_RESET "\n");
-                    int total = 0;
-                    while (1) {
-                        // Wait for server to push logs, we need a small wait so we don't race the listener
-                        // But wait! The listener thread is reading from global_sock! 
-                        // If listener thread reads MSG_TRIP_HISTORY_RES, it won't know what to do.
-                        // We must send a command and let the server process it.
-                        // Actually, having two threads read from the same socket is a race condition.
-                        // I will fix this by letting the user check it safely or adding a lock.
-                        break;
+                    // Wait for background listener thread to finish reading and printing
+                    while (viewing_earnings) {
+                        usleep(10000); // 10ms
                     }
-                    printf(C_RED "Earnings view requires dedicated socket or lock - please check admin portal." C_RESET "\n");
                     break;
                 }
                 case 5:
