@@ -27,6 +27,8 @@ int current_y = 0;
 int pending_offer = 0;
 volatile int viewing_earnings = 0;
 volatile int total_earnings = 0;
+pthread_cond_t earnings_cond = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t earnings_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void* server_listener_thread(void* arg) {
     (void)arg;
@@ -67,7 +69,10 @@ void* server_listener_thread(void* arg) {
         } else if (res.type == MSG_TRIP_HISTORY_END) {
             if (viewing_earnings) {
                 printf(C_CYAN "Total Earnings: " C_GREEN "$%d" C_RESET "\n", total_earnings);
+                pthread_mutex_lock(&earnings_mutex);
                 viewing_earnings = 0;
+                pthread_cond_signal(&earnings_cond);
+                pthread_mutex_unlock(&earnings_mutex);
                 fflush(stdout);
             }
         }
@@ -168,18 +173,23 @@ int main() {
                     printf(C_CYAN "New Location: (%d, %d)" C_RESET "\n", current_x, current_y);
                     break;
                 case 4: {
+                    pthread_mutex_lock(&earnings_mutex);
+                    total_earnings = 0;
+                    viewing_earnings = 1;
+                    pthread_mutex_unlock(&earnings_mutex);
+
                     // Fetch history via sockets safely!
                     packet.type = MSG_TRIP_HISTORY_REQ;
                     packet.payload[0] = '\0';
-                    total_earnings = 0;
-                    viewing_earnings = 1;
                     send(sock, &packet, sizeof(packet), 0);
                     
                     printf(C_CYAN "\n--- My Earnings ---" C_RESET "\n");
-                    // Wait for background listener thread to finish reading and printing
+                    
+                    pthread_mutex_lock(&earnings_mutex);
                     while (viewing_earnings) {
-                        usleep(10000); // 10ms
+                        pthread_cond_wait(&earnings_cond, &earnings_mutex);
                     }
+                    pthread_mutex_unlock(&earnings_mutex);
                     break;
                 }
                 case 5:
