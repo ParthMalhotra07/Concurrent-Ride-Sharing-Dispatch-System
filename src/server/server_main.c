@@ -17,21 +17,38 @@
 #define MAX_PENDING 10
 #define USERS_FILE "data/users.dat"
 #define TRIP_HISTORY_FILE "data/trip_history.txt"
+#define MAX_ACTIVE_OFFERS 100
 
 // These are my global variables for keeping track of the server state
-// I use mutexes to make sure different threads don't mess with the same data at once
 pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t driver_mutex = PTHREAD_MUTEX_INITIALIZER;
 static SystemGridMap* grid_shm = NULL;
 static sem_t* driver_pool_sem = NULL;
 
-int user_sockets[2000] = {0};
-volatile int user_responses[2000] = {0}; // 0 is waiting, 1 is accept, 2 is reject
+// Bounded arrays to prevent buffer overflows
+int user_sockets[MAX_USERS] = {0};
 
-/* 
-   This function reads the users file and checks if the username and password match.
-   It returns 1 if everything is okay and fills the user info, otherwise returns 0.
-*/
+// Condition variables and structure for tracking active ride offers
+typedef struct {
+    int driver_id;
+    int rider_id;
+    int status; // 0 = pending, 1 = accepted, 2 = rejected
+    int in_use;
+    pthread_cond_t cond;
+    pthread_mutex_t mutex;
+} ActiveOffer;
+
+ActiveOffer active_offers[MAX_ACTIVE_OFFERS];
+pthread_mutex_t offers_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void init_offers() {
+    for (int i = 0; i < MAX_ACTIVE_OFFERS; i++) {
+        active_offers[i].in_use = 0;
+        pthread_cond_init(&active_offers[i].cond, NULL);
+        pthread_mutex_init(&active_offers[i].mutex, NULL);
+    }
+}
+
 int authenticate_user(const char* username, const char* password, UserRecord* out_user) {
     FILE *fp = fopen(USERS_FILE, "r");
     if (!fp) return 0;
@@ -51,10 +68,6 @@ int authenticate_user(const char* username, const char* password, UserRecord* ou
     return 0;
 }
 
-/*
-   I use this to save every finished trip into a text file.
-   It uses fcntl locking to make sure two threads don't write at the same time.
-*/
 void log_trip(int rider_id, int driver_id, int sx, int sy, int dx, int dy, int fare) {
     int fd = open(TRIP_HISTORY_FILE, O_WRONLY | O_APPEND | O_CREAT, 0666);
     if (fd < 0) return;
@@ -65,7 +78,7 @@ void log_trip(int rider_id, int driver_id, int sx, int sy, int dx, int dy, int f
     fcntl(fd, F_SETLKW, &lock);
     
     char entry[256];
-    sprintf(entry, "TRIP %d %d %d %d %d %d %d\n", rider_id, driver_id, sx, sy, dx, dy, fare);
+    snprintf(entry, sizeof(entry), "TRIP %d %d %d %d %d %d %d\n", rider_id, driver_id, sx, sy, dx, dy, fare);
     write(fd, entry, strlen(entry));
     
     lock.l_type = F_UNLCK; 
@@ -73,10 +86,6 @@ void log_trip(int rider_id, int driver_id, int sx, int sy, int dx, int dy, int f
     close(fd);
 }
 
-/*
-   Updates where a driver is and what they are doing.
-   If a driver becomes available, I increment the semaphore so riders can find them.
-*/
 void update_driver_status(int driver_id, DriverStatus status, int x, int y) {
     pthread_mutex_lock(&driver_mutex);
     int driver_index = -1;
@@ -99,10 +108,6 @@ void update_driver_status(int driver_id, DriverStatus status, int x, int y) {
     pthread_mutex_unlock(&driver_mutex);
 }
 
-/*
-   This is the core matchmaking logic. It looks through the shared memory
-   to find the closest driver who isn't on the exclude list.
-*/
 int request_ride(int rider_id, int rider_x, int rider_y, int* exclude_list, int exclude_count) {
     printf("Searching for nearest driver for Rider %d...\n", rider_id);
     if (sem_trywait(driver_pool_sem) != 0) return -1;
@@ -138,18 +143,21 @@ int request_ride(int rider_id, int rider_x, int rider_y, int* exclude_list, int 
     return matched_driver;
 }
 
-/*
-   Handles the login process when a client sends their username and password.
-   It also checks if the user is already logged in or if they are banned.
-*/
 void handle_auth_req(int client_sock, MessagePacket* packet, int* authenticated, UserRecord* current_user) {
     char username[32]; 
     char password[64];
     if (sscanf(packet->payload, "%31s %63s", username, password) == 2) {
         if (authenticate_user(username, password, current_user)) {
+            if (current_user->user_id < 0 || current_user->user_id >= MAX_USERS) {
+                packet->type = MSG_ERROR; 
+                strncpy(packet->payload, "Internal server error: Invalid User ID.", 255);
+                send(client_sock, packet, sizeof(MessagePacket), 0);
+                return;
+            }
+            
             if (current_user->is_banned) {
                 packet->type = MSG_ERROR; 
-                strcpy(packet->payload, "Account banned.");
+                strncpy(packet->payload, "Account banned.", 255);
                 send(client_sock, packet, sizeof(MessagePacket), 0);
                 printf("Rejected banned user: %s\n", username);
             } else {
@@ -157,30 +165,26 @@ void handle_auth_req(int client_sock, MessagePacket* packet, int* authenticated,
                 if (user_sockets[current_user->user_id] != 0) {
                     pthread_mutex_unlock(&session_mutex);
                     packet->type = MSG_ERROR; 
-                    strcpy(packet->payload, "Already logged in elsewhere.");
+                    strncpy(packet->payload, "Already logged in elsewhere.", 255);
                     send(client_sock, packet, sizeof(MessagePacket), 0);
                 } else {
                     *authenticated = 1;
                     user_sockets[current_user->user_id] = client_sock;
                     pthread_mutex_unlock(&session_mutex);
                     packet->type = MSG_AUTH_RES;
-                    sprintf(packet->payload, "%d %d", current_user->user_id, current_user->role);
+                    snprintf(packet->payload, sizeof(packet->payload), "%d %d", current_user->user_id, current_user->role);
                     send(client_sock, packet, sizeof(MessagePacket), 0);
                     printf("User '%s' authenticated.\n", current_user->username);
                 }
             }
         } else {
             packet->type = MSG_ERROR; 
-            strcpy(packet->payload, "Invalid credentials.");
+            strncpy(packet->payload, "Invalid credentials.", 255);
             send(client_sock, packet, sizeof(MessagePacket), 0);
         }
     }
 }
 
-/*
-   This manages the whole ride request flow. It finds a driver, sends them an offer,
-   waits for their response, and then calculates the fare if they accept.
-*/
 void handle_ride_request(int client_sock, MessagePacket* packet, UserRecord* current_user) {
     int sx, sy, dx, dy;
     if (sscanf(packet->payload, "%d %d %d %d", &sx, &sy, &dx, &dy) == 4) {
@@ -192,42 +196,69 @@ void handle_ride_request(int client_sock, MessagePacket* packet, UserRecord* cur
             int driver_id = request_ride(current_user->user_id, sx, sy, exclude_list, exclude_count);
             if (driver_id == -1) {
                 packet->type = MSG_ERROR; 
-                strcpy(packet->payload, "No drivers available.");
+                strncpy(packet->payload, "No drivers available.", 255);
                 send(client_sock, packet, sizeof(MessagePacket), 0); 
                 break;
             }
             
             pthread_mutex_lock(&session_mutex);
             int driver_sock = user_sockets[driver_id];
-            user_responses[driver_id] = 0;
             pthread_mutex_unlock(&session_mutex);
             
-            packet->type = MSG_RIDE_OFFER; 
-            sprintf(packet->payload, "%d %d %d %d", sx, sy, dx, dy);
-            send(driver_sock, packet, sizeof(MessagePacket), 0);
+            // Create a pending offer and wait for driver response using Condition Variables
+            pthread_mutex_lock(&offers_mutex);
+            int offer_slot = -1;
+            for (int i = 0; i < MAX_ACTIVE_OFFERS; i++) {
+                if (!active_offers[i].in_use) {
+                    offer_slot = i;
+                    active_offers[i].in_use = 1;
+                    active_offers[i].driver_id = driver_id;
+                    active_offers[i].rider_id = current_user->user_id;
+                    active_offers[i].status = 0;
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&offers_mutex);
             
-            int wait_time = 0; 
-            int local_resp = 0;
-            while(wait_time < 10) {
-                pthread_mutex_lock(&session_mutex); 
-                local_resp = user_responses[driver_id]; 
-                pthread_mutex_unlock(&session_mutex);
-                if (local_resp != 0) break; 
-                sleep(1); 
-                wait_time++;
+            if (offer_slot == -1) {
+                packet->type = MSG_ERROR; 
+                strncpy(packet->payload, "Server too busy handling offers.", 255);
+                send(client_sock, packet, sizeof(MessagePacket), 0); 
+                break;
             }
 
-            if (local_resp == 1) {
+            packet->type = MSG_RIDE_OFFER; 
+            snprintf(packet->payload, sizeof(packet->payload), "%d %d %d %d", sx, sy, dx, dy);
+            send(driver_sock, packet, sizeof(MessagePacket), 0);
+            
+            // Wait for response using CV instead of CPU-wasting spinlock
+            pthread_mutex_lock(&active_offers[offer_slot].mutex);
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_sec += 10; // 10 seconds timeout
+            
+            int cv_res = 0;
+            while (active_offers[offer_slot].status == 0 && cv_res == 0) {
+                cv_res = pthread_cond_timedwait(&active_offers[offer_slot].cond, &active_offers[offer_slot].mutex, &ts);
+            }
+            int driver_response = active_offers[offer_slot].status;
+            pthread_mutex_unlock(&active_offers[offer_slot].mutex);
+            
+            // Cleanup offer slot
+            pthread_mutex_lock(&offers_mutex);
+            active_offers[offer_slot].in_use = 0;
+            pthread_mutex_unlock(&offers_mutex);
+
+            if (driver_response == 1) {
                 trip_started = 1; 
                 packet->type = MSG_RIDE_MATCHED; 
-                sprintf(packet->payload, "%d", driver_id);
+                snprintf(packet->payload, sizeof(packet->payload), "%d", driver_id);
                 send(client_sock, packet, sizeof(MessagePacket), 0);
                 
-                sleep(5); // Simulate the trip happening
+                sleep(3); // Simulate trip (shortened for demonstration)
                 int base_fare = 15 + ((abs(dx - sx) + abs(dy - sy)) * 5);
                 double surge = 1.0;
                 
-                // Read the current surge price from shared memory
                 int s_fd = shm_open(SURGE_SHM_NAME, O_RDONLY, 0666);
                 if (s_fd != -1) {
                     SurgeState* s_shm = mmap(NULL, sizeof(SurgeState), PROT_READ, MAP_SHARED, s_fd, 0);
@@ -250,10 +281,92 @@ void handle_ride_request(int client_sock, MessagePacket* packet, UserRecord* cur
     }
 }
 
-/*
-   Special commands that only the Admin can run, like banning a user.
-   It updates the users file safely using file locking.
-*/
+void process_driver_response(int driver_id, int status) {
+    pthread_mutex_lock(&offers_mutex);
+    for (int i = 0; i < MAX_ACTIVE_OFFERS; i++) {
+        if (active_offers[i].in_use && active_offers[i].driver_id == driver_id) {
+            pthread_mutex_lock(&active_offers[i].mutex);
+            active_offers[i].status = status; // 1 = accept, 2 = reject
+            pthread_cond_signal(&active_offers[i].cond);
+            pthread_mutex_unlock(&active_offers[i].mutex);
+            break;
+        }
+    }
+    pthread_mutex_unlock(&offers_mutex);
+}
+
+void handle_trip_history_req(int client_sock, MessagePacket* packet, UserRecord* current_user) {
+    FILE *fp = fopen("data/trip_history.txt", "r");
+    if (!fp) {
+        packet->type = MSG_TRIP_HISTORY_END;
+        send(client_sock, packet, sizeof(MessagePacket), 0);
+        return;
+    }
+    
+    // Acquire Advisory Read Lock
+    int fd = fileno(fp);
+    struct flock lock;
+    memset(&lock, 0, sizeof(lock));
+    lock.l_type = F_RDLCK;
+    fcntl(fd, F_SETLKW, &lock);
+    
+    char line[256];
+    while (fgets(line, sizeof(line), fp)) {
+        int r_id, d_id, sx, sy, ex, ey, fare;
+        if (sscanf(line, "TRIP %d %d %d %d %d %d %d", &r_id, &d_id, &sx, &sy, &ex, &ey, &fare) == 7) {
+            // Filter based on role
+            int should_send = 0;
+            if (current_user->role == ROLE_ADMIN) should_send = 1;
+            else if (current_user->role == ROLE_RIDER && r_id == current_user->user_id) should_send = 1;
+            else if (current_user->role == ROLE_DRIVER && d_id == current_user->user_id) should_send = 1;
+            
+            if (should_send) {
+                packet->type = MSG_TRIP_HISTORY_RES;
+                snprintf(packet->payload, sizeof(packet->payload), "%d %d %d %d %d %d %d", r_id, d_id, sx, sy, ex, ey, fare);
+                send(client_sock, packet, sizeof(MessagePacket), 0);
+            }
+        }
+    }
+    
+    // Release Lock
+    lock.l_type = F_UNLCK;
+    fcntl(fd, F_SETLK, &lock);
+    fclose(fp);
+    
+    packet->type = MSG_TRIP_HISTORY_END;
+    send(client_sock, packet, sizeof(MessagePacket), 0);
+}
+
+void handle_revenue_req(int client_sock, MessagePacket* packet) {
+    FILE *fp = fopen("data/trip_history.txt", "r");
+    long total_revenue = 0;
+    int total_trips = 0;
+    
+    if (fp) {
+        int fd = fileno(fp);
+        struct flock lock;
+        memset(&lock, 0, sizeof(lock));
+        lock.l_type = F_RDLCK;
+        fcntl(fd, F_SETLKW, &lock);
+        
+        char line[256];
+        while (fgets(line, sizeof(line), fp)) {
+            int r_id, d_id, sx, sy, ex, ey, fare;
+            if (sscanf(line, "TRIP %d %d %d %d %d %d %d", &r_id, &d_id, &sx, &sy, &ex, &ey, &fare) == 7) {
+                total_revenue += fare;
+                total_trips++;
+            }
+        }
+        lock.l_type = F_UNLCK;
+        fcntl(fd, F_SETLK, &lock);
+        fclose(fp);
+    }
+    
+    packet->type = MSG_REVENUE_REPORT_RES;
+    snprintf(packet->payload, sizeof(packet->payload), "%d %ld", total_trips, total_revenue);
+    send(client_sock, packet, sizeof(MessagePacket), 0);
+}
+
 void handle_admin_action(int client_sock, MessagePacket* packet) {
     char target[32]; 
     int status;
@@ -285,11 +398,11 @@ void handle_admin_action(int client_sock, MessagePacket* packet) {
             if (found) {
                 rename("data/users_temp.dat", "data/users.dat");
                 packet->type = MSG_ADMIN_ACTION; 
-                sprintf(packet->payload, "User %s status updated successfully.", target);
+                snprintf(packet->payload, sizeof(packet->payload), "User %s status updated successfully.", target);
             } else { 
                 remove("data/users_temp.dat"); 
                 packet->type = MSG_ERROR; 
-                sprintf(packet->payload, "Could not find that user."); 
+                strncpy(packet->payload, "Could not find that user.", 255); 
             }
         }
         lock.l_type = F_UNLCK; 
@@ -299,39 +412,33 @@ void handle_admin_action(int client_sock, MessagePacket* packet) {
     }
 }
 
-/*
-   Cleans up everything before the server closes.
-   I make sure to unlink shared memory so it doesn't leak.
-*/
 void cleanup_and_exit(int sig) {
     (void)sig; 
-    printf("Stopping server and cleaning up...\n");
+    printf("\nStopping server and cleaning up IPC resources...\n");
     if (grid_shm) munmap(grid_shm, SHM_SIZE);
     shm_unlink(SHM_NAME); 
     sem_unlink(SEM_POOL_NAME); 
     exit(0);
 }
 
-/*
-   Sets up my shared memory and semaphores when the server starts.
-*/
 void setup_ipc() {
     int shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
-    ftruncate(shm_fd, SHM_SIZE);
+    if (shm_fd == -1) { perror("shm_open failed"); exit(1); }
+    if (ftruncate(shm_fd, SHM_SIZE) == -1) { perror("ftruncate failed"); exit(1); }
     grid_shm = mmap(NULL, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (grid_shm == MAP_FAILED) { perror("mmap failed"); exit(1); }
+    
     for(int i = 0; i < MAX_DRIVERS; i++) { 
         grid_shm->grid[i].status = STATUS_OFFLINE; 
         grid_shm->grid[i].driver_id = 0; 
     }
     sem_unlink(SEM_POOL_NAME);
     driver_pool_sem = sem_open(SEM_POOL_NAME, O_CREAT, 0666, 0);
+    if (driver_pool_sem == SEM_FAILED) { perror("sem_open failed"); exit(1); }
     printf("System memory and locks ready.\n");
+    init_offers();
 }
 
-/*
-   Each connected user gets their own thread running this function.
-   It waits for messages and calls the right helper function to handle them.
-*/
 void* handle_client(void* arg) {
     int client_sock = *(int*)arg; 
     free(arg);
@@ -342,8 +449,12 @@ void* handle_client(void* arg) {
 
     while (1) {
         if (recv(client_sock, &packet, sizeof(MessagePacket), 0) <= 0) {
+            // FIX: Session Leakage Fix! We must clear the socket from the array on disconnect
             if (authenticated) {
-                printf("User %s (ID: %d) logged out.\n", current_user.username, current_user.user_id);
+                printf("User %s (ID: %d) connection lost.\n", current_user.username, current_user.user_id);
+                pthread_mutex_lock(&session_mutex);
+                user_sockets[current_user.user_id] = 0;
+                pthread_mutex_unlock(&session_mutex);
                 if (current_user.role == ROLE_DRIVER) {
                     update_driver_status(current_user.user_id, STATUS_OFFLINE, 0, 0);
                 }
@@ -357,7 +468,7 @@ void* handle_client(void* arg) {
             handle_auth_req(client_sock, &packet, &authenticated, &current_user);
         } else if (!authenticated) {
             packet.type = MSG_ERROR; 
-            strcpy(packet.payload, "Authenticate first.");
+            strncpy(packet.payload, "Authenticate first.", 255);
             send(client_sock, &packet, sizeof(MessagePacket), 0);
         } else {
             switch(packet.type) {
@@ -381,17 +492,13 @@ void* handle_client(void* arg) {
                     break;
                 case MSG_RIDE_ACCEPT:
                     if (current_user.role == ROLE_DRIVER) { 
-                        pthread_mutex_lock(&session_mutex); 
-                        user_responses[current_user.user_id] = 1; 
-                        pthread_mutex_unlock(&session_mutex); 
+                        process_driver_response(current_user.user_id, 1);
                         printf("Driver %d accepted the ride.\n", current_user.user_id);
                     }
                     break;
                 case MSG_RIDE_REJECT:
                     if (current_user.role == ROLE_DRIVER) { 
-                        pthread_mutex_lock(&session_mutex); 
-                        user_responses[current_user.user_id] = 2; 
-                        pthread_mutex_unlock(&session_mutex); 
+                        process_driver_response(current_user.user_id, 2);
                         printf("Driver %d rejected the ride.\n", current_user.user_id);
                     }
                     break;
@@ -407,6 +514,14 @@ void* handle_client(void* arg) {
                         handle_admin_action(client_sock, &packet);
                     }
                     break;
+                case MSG_TRIP_HISTORY_REQ:
+                    handle_trip_history_req(client_sock, &packet, &current_user);
+                    break;
+                case MSG_REVENUE_REPORT_REQ:
+                    if (current_user.role == ROLE_ADMIN) {
+                        handle_revenue_req(client_sock, &packet);
+                    }
+                    break;
                 default:
                     break;
             }
@@ -417,14 +532,13 @@ cleanup:
     return NULL;
 }
 
-/*
-   Starts the server, sets up IPC, and listens for new incoming connections.
-*/
 int main() {
     signal(SIGINT, cleanup_and_exit); 
     setup_ipc();
     
     int server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_sock < 0) { perror("Socket failed"); return 1; }
+    
     int opt = 1; 
     setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     
@@ -434,16 +548,26 @@ int main() {
     addr.sin_addr.s_addr = INADDR_ANY; 
     addr.sin_port = htons(PORT);
     
-    bind(server_sock, (struct sockaddr*)&addr, sizeof(addr));
-    listen(server_sock, MAX_PENDING);
+    if (bind(server_sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("Bind failed"); return 1;
+    }
+    if (listen(server_sock, MAX_PENDING) < 0) {
+        perror("Listen failed"); return 1;
+    }
     
     printf("Server listening on port %d...\n", PORT);
     while (1) {
         int* csock = malloc(sizeof(int));
+        if (!csock) continue;
         *csock = accept(server_sock, NULL, NULL);
+        if (*csock < 0) { free(csock); continue; }
+        
         pthread_t tid; 
-        pthread_create(&tid, NULL, handle_client, csock); 
-        pthread_detach(tid);
+        if (pthread_create(&tid, NULL, handle_client, csock) != 0) {
+            free(csock);
+        } else {
+            pthread_detach(tid);
+        }
     }
     return 0;
 }

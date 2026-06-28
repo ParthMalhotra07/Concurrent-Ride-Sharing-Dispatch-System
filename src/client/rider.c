@@ -10,15 +10,18 @@
 #define SERVER_IP "127.0.0.1"
 #define PORT 8080
 
-/* 
-   This is the client program for Riders. It connects to the server, 
-   authenticates, and then allows the user to request rides or view history.
-*/
+// ANSI Color Codes for polished UI
+#define C_RESET   "\033[0m"
+#define C_GREEN   "\033[1;32m"
+#define C_BLUE    "\033[1;34m"
+#define C_CYAN    "\033[1;36m"
+#define C_YELLOW  "\033[1;33m"
+#define C_RED     "\033[1;31m"
+
 int main() {
     int sock;
     struct sockaddr_in server_addr;
 
-    // Standard socket creation and connection to localhost port 8080
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("Socket creation failed");
         return -1;
@@ -37,31 +40,32 @@ int main() {
         return -1;
     }
 
-    printf("--- Welcome to the Ride-Sharing System (Rider) ---\n");
+    printf(C_BLUE "====================================================\n");
+    printf("   Welcome to the Ride-Sharing System (Rider)\n");
+    printf("====================================================" C_RESET "\n");
+    
     char username[32], password[64];
     printf("Username: ");
     scanf("%31s", username);
     printf("Password: ");
     scanf("%63s", password);
 
-    // Prepare and send the login request packet
     MessagePacket packet;
     packet.type = MSG_AUTH_REQ;
-    sprintf(packet.payload, "%s %s", username, password);
+    snprintf(packet.payload, sizeof(packet.payload), "%s %s", username, password);
     send(sock, &packet, sizeof(packet), 0);
 
-    // Wait for the server to tell us if I are logged in or not
     MessagePacket res;
     recv(sock, &res, sizeof(res), 0);
 
     if (res.type == MSG_AUTH_RES) {
         int my_id;
         sscanf(res.payload, "%d", &my_id);
-        printf("Successfully logged in! Your ID is %d\n", my_id);
+        printf(C_GREEN "Successfully logged in! Your ID is %d" C_RESET "\n", my_id);
 
         int choice;
         while (1) {
-            printf("\nMain Menu:\n");
+            printf(C_CYAN "\nMain Menu:" C_RESET "\n");
             printf("1. Book a Ride\n");
             printf("2. View My History\n");
             printf("3. Logout\n");
@@ -70,7 +74,7 @@ int main() {
 
             if (choice == 3) {
                 packet.type = MSG_DISCONNECT;
-                strcpy(packet.payload, "Bye");
+                strncpy(packet.payload, "Bye", 255);
                 send(sock, &packet, sizeof(packet), 0);
                 break;
             }
@@ -84,63 +88,47 @@ int main() {
                     scanf("%d %d", &dx, &dy);
 
                     packet.type = MSG_RIDE_REQ;
-                    sprintf(packet.payload, "%d %d %d %d", sx, sy, dx, dy);
-                    printf("Looking for a driver nearby...\n");
+                    snprintf(packet.payload, sizeof(packet.payload), "%d %d %d %d", sx, sy, dx, dy);
+                    printf(C_YELLOW "Looking for a driver nearby..." C_RESET "\n");
                     send(sock, &packet, sizeof(packet), 0);
                     
-                    // The server will block here until a driver accepts or I time out
                     recv(sock, &res, sizeof(res), 0);
                     if (res.type == MSG_RIDE_MATCHED) {
-                        printf("Matched with Driver ID %s! They are coming to pick you up.\n", res.payload);
+                        printf(C_GREEN "Matched with Driver ID %s! They are coming to pick you up." C_RESET "\n", res.payload);
                     } else {
-                        printf("Server says: %s\n", res.payload);
+                        printf(C_RED "Server says: %s" C_RESET "\n", res.payload);
                     }
                     break;
                 }
                 case 2: {
-                    /* 
-                       I read the trip_history file directly to show the user their rides.
-                       I use a read-lock (F_RDLCK) so I don't read half-written data.
-                    */
-                    FILE *fp = fopen("data/trip_history.txt", "r");
-                    if (!fp) {
-                        printf("No trips recorded yet.\n");
-                        break;
-                    }
-                    int fd = fileno(fp);
-                    struct flock lock;
-                    memset(&lock, 0, sizeof(lock));
-                    lock.l_type = F_RDLCK;
-                    lock.l_whence = SEEK_SET;
-                    lock.l_start = 0;
-                    lock.l_len = 0;
-                    fcntl(fd, F_SETLKW, &lock);
+                    packet.type = MSG_TRIP_HISTORY_REQ;
+                    packet.payload[0] = '\0';
+                    send(sock, &packet, sizeof(packet), 0);
                     
-                    printf("\n--- Your Rides ---\n");
-                    char line[256];
+                    printf(C_CYAN "\n--- Your Rides ---" C_RESET "\n");
                     int count = 0;
-                    while (fgets(line, sizeof(line), fp)) {
-                        int r_id, d_id, sx, sy, ex, ey, fare;
-                        if (sscanf(line, "TRIP %d %d %d %d %d %d %d", &r_id, &d_id, &sx, &sy, &ex, &ey, &fare) == 7) {
-                            if (r_id == my_id) {
-                                printf(" -> Trip to (%d,%d) | Fare: $%d\n", ex, ey, fare);
+                    while (1) {
+                        if (recv(sock, &res, sizeof(res), 0) <= 0) break;
+                        if (res.type == MSG_TRIP_HISTORY_END) break;
+                        
+                        if (res.type == MSG_TRIP_HISTORY_RES) {
+                            int r_id, d_id, sx, sy, ex, ey, fare;
+                            if (sscanf(res.payload, "%d %d %d %d %d %d %d", &r_id, &d_id, &sx, &sy, &ex, &ey, &fare) == 7) {
+                                printf(" -> Trip from (%d,%d) to (%d,%d) | Driver: %d | Fare: " C_GREEN "$%d" C_RESET "\n", 
+                                        sx, sy, ex, ey, d_id, fare);
                                 count++;
                             }
                         }
                     }
                     if (count == 0) printf("    No trips found in history.\n");
-                    
-                    lock.l_type = F_UNLCK;
-                    fcntl(fd, F_SETLK, &lock);
-                    fclose(fp);
                     break;
                 }
                 default:
-                    printf("Invalid input.\n");
+                    printf(C_RED "Invalid input." C_RESET "\n");
             }
         }
     } else {
-        printf("Login failed: %s\n", res.payload);
+        printf(C_RED "Login failed: %s" C_RESET "\n", res.payload);
     }
 
     close(sock);

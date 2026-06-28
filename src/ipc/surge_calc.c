@@ -70,20 +70,23 @@ int main() {
             surge_shm->multiplier = (double)surge_multiplier;
         }
 
-        // Clear the screen to make a nice live dashboard in the terminal
-        system("clear");
+        // Clear the screen using ANSI escape codes instead of system("clear") for cross-platform compatibility
+        printf("\033[H\033[J");
         
-        printf("System Status Dashboard:\n");
-        printf("  Drivers Available : %d\n", available_drivers);
-        printf("  Drivers On Trip   : %d\n", on_trip_drivers);
-        printf("  Drivers Offline   : %d\n\n", offline_drivers);
+        printf("\033[1;36m====================================================\n");
+        printf("         Surge Pricing & Demand Monitor\n");
+        printf("====================================================\033[0m\n\n");
+        
+        printf("  Drivers Available : \033[1;32m%d\033[0m\n", available_drivers);
+        printf("  Drivers On Trip   : \033[1;33m%d\033[0m\n", on_trip_drivers);
+        printf("  Drivers Offline   : \033[1;31m%d\033[0m\n\n", offline_drivers);
         
         if (surge_multiplier >= 2.0) {
-            printf("Current Surge: %.1fx (High Demand!)\n", surge_multiplier);
+            printf("Current Surge: \033[1;31m%.1fx (High Demand!)\033[0m\n", surge_multiplier);
         } else if (surge_multiplier > 1.0) {
-            printf("Current Surge: %.1fx (Busy)\n", surge_multiplier);
+            printf("Current Surge: \033[1;33m%.1fx (Busy)\033[0m\n", surge_multiplier);
         } else {
-            printf("Current Surge: 1.0x (Normal)\n");
+            printf("Current Surge: \033[1;32m1.0x (Normal)\033[0m\n");
         }
         
         fflush(stdout);

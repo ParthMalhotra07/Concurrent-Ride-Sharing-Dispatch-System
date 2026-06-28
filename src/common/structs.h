@@ -10,6 +10,7 @@
    number of drivers I want to handle in the grid.
 */
 #define MAX_DRIVERS 100
+#define MAX_USERS 2000
 #define SHM_NAME "/ride_share_shm"
 #define SEM_POOL_NAME "/sem_driver_pool"
 #define SURGE_SHM_NAME "/surge_multiplier_shm"
@@ -30,7 +31,12 @@ typedef enum {
     MSG_RIDE_REJECT,
     MSG_ERROR,
     MSG_DISCONNECT,
-    MSG_ADMIN_ACTION
+    MSG_ADMIN_ACTION,
+    MSG_TRIP_HISTORY_REQ,
+    MSG_TRIP_HISTORY_RES,
+    MSG_TRIP_HISTORY_END,
+    MSG_REVENUE_REPORT_REQ,
+    MSG_REVENUE_REPORT_RES
 } MessageType;
 
 /* 

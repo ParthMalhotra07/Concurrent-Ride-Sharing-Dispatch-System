@@ -12,10 +12,14 @@
 #define SERVER_IP "127.0.0.1"
 #define PORT 8080
 
-/* 
-   This is the admin program. It has special powers like viewing the 
-   global driver grid through shared memory and locking/unlocking user accounts.
-*/
+// ANSI Color Codes
+#define C_RESET   "\033[0m"
+#define C_GREEN   "\033[1;32m"
+#define C_BLUE    "\033[1;34m"
+#define C_CYAN    "\033[1;36m"
+#define C_YELLOW  "\033[1;33m"
+#define C_RED     "\033[1;31m"
+
 int main() {
     int sock;
     struct sockaddr_in server_addr;
@@ -38,7 +42,9 @@ int main() {
         return -1;
     }
 
-    printf("--- Administrative Dashboard ---\n");
+    printf(C_RED "====================================================\n");
+    printf("   Administrative Dashboard (Root Access)\n");
+    printf("====================================================" C_RESET "\n");
     char username[32], password[64];
     printf("Username: ");
     scanf("%31s", username);
@@ -47,21 +53,21 @@ int main() {
 
     MessagePacket packet;
     packet.type = MSG_AUTH_REQ;
-    sprintf(packet.payload, "%s %s", username, password);
+    snprintf(packet.payload, sizeof(packet.payload), "%s %s", username, password);
     send(sock, &packet, sizeof(packet), 0);
 
     MessagePacket res;
     recv(sock, &res, sizeof(res), 0);
 
     if (res.type == MSG_AUTH_RES) {
-        printf("Access Granted: Admin logged in.\n");
+        printf(C_GREEN "Access Granted: Admin logged in." C_RESET "\n");
         
         int choice;
         while (1) {
-            printf("\nAdmin Menu:\n");
-            printf("1. View Live Driver Grid\n");
-            printf("2. View All Trip Records\n");
-            printf("3. Calculate Total Earnings\n");
+            printf(C_CYAN "\nAdmin Menu:" C_RESET "\n");
+            printf("1. View Live Driver Grid (IPC)\n");
+            printf("2. View All Trip Records (Socket Stream)\n");
+            printf("3. Calculate Total Earnings (Socket Request)\n");
             printf("4. Lock/Unlock a User Account\n");
             printf("5. Exit\n");
             printf("Choice: ");
@@ -69,29 +75,25 @@ int main() {
 
             if (choice == 5) {
                 packet.type = MSG_DISCONNECT;
-                strcpy(packet.payload, "Bye");
+                strncpy(packet.payload, "Bye", 255);
                 send(sock, &packet, sizeof(packet), 0);
                 break;
             }
 
             switch (choice) {
                 case 1: {
-                    /* 
-                       Admins can "spy" on the shared memory grid to see every 
-                       driver's status and location in real-time.
-                    */
                     int shm_fd = shm_open(SHM_NAME, O_RDONLY, 0666);
                     if (shm_fd == -1) {
-                        printf("Error: Could not open shared memory.\n");
+                        printf(C_RED "Error: Could not open shared memory." C_RESET "\n");
                         break;
                     }
                     SystemGridMap* grid_shm = mmap(NULL, SHM_SIZE, PROT_READ, MAP_SHARED, shm_fd, 0);
                     if (grid_shm != MAP_FAILED) {
-                        printf("\n--- Global Driver Grid ---\n");
+                        printf(C_CYAN "\n--- Global Driver Grid ---" C_RESET "\n");
                         int count = 0;
                         for (int i = 0; i < MAX_DRIVERS; i++) {
                             if (grid_shm->grid[i].driver_id != 0) {
-                                printf(" ID %d | Status: %d | At: (%d, %d)\n", 
+                                printf(" ID " C_YELLOW "%d" C_RESET " | Status: %d | At: (%d, %d)\n", 
                                         grid_shm->grid[i].driver_id, 
                                         grid_shm->grid[i].status, 
                                         grid_shm->grid[i].current_loc.x, 
@@ -106,48 +108,47 @@ int main() {
                     break;
                 }
                 case 2: {
-                    // Show every single line in the trip history text file
-                    FILE *fp = fopen("data/trip_history.txt", "r");
-                    if (!fp) {
-                        printf("History file is missing.\n");
-                        break;
+                    packet.type = MSG_TRIP_HISTORY_REQ;
+                    packet.payload[0] = '\0';
+                    send(sock, &packet, sizeof(packet), 0);
+                    
+                    printf(C_CYAN "\n--- Full System History ---" C_RESET "\n");
+                    int count = 0;
+                    while (1) {
+                        if (recv(sock, &res, sizeof(res), 0) <= 0) break;
+                        if (res.type == MSG_TRIP_HISTORY_END) break;
+                        
+                        if (res.type == MSG_TRIP_HISTORY_RES) {
+                            int r_id, d_id, sx, sy, ex, ey, fare;
+                            if (sscanf(res.payload, "%d %d %d %d %d %d %d", &r_id, &d_id, &sx, &sy, &ex, &ey, &fare) == 7) {
+                                printf(" Rider: %d | Driver: %d | From (%d,%d) to (%d,%d) | Fare: " C_GREEN "$%d" C_RESET "\n", 
+                                        r_id, d_id, sx, sy, ex, ey, fare);
+                                count++;
+                            }
+                        }
                     }
-                    printf("\n--- Full System History ---\n");
-                    char line[256];
-                    while (fgets(line, sizeof(line), fp)) {
-                        printf(" %s", line);
-                    }
-                    fclose(fp);
+                    if (count == 0) printf("    No records found in database.\n");
                     break;
                 }
                 case 3: {
-                    // Summarize all earnings from all drivers in the system
-                    FILE *fp = fopen("data/trip_history.txt", "r");
-                    if (!fp) {
-                        printf("No financial data found.\n");
-                        break;
+                    packet.type = MSG_REVENUE_REPORT_REQ;
+                    packet.payload[0] = '\0';
+                    send(sock, &packet, sizeof(packet), 0);
+                    
+                    recv(sock, &res, sizeof(res), 0);
+                    if (res.type == MSG_REVENUE_REPORT_RES) {
+                        int trips;
+                        long rev;
+                        sscanf(res.payload, "%d %ld", &trips, &rev);
+                        printf(C_CYAN "\n--- Finance Report ---" C_RESET "\n");
+                        printf(" Total System Trips: %d\n", trips);
+                        printf(" Total System Revenue: " C_GREEN "$%ld" C_RESET "\n", rev);
+                    } else {
+                        printf(C_RED "Failed to retrieve report." C_RESET "\n");
                     }
-                    long total_revenue = 0;
-                    int total_trips = 0;
-                    char line[256];
-                    while (fgets(line, sizeof(line), fp)) {
-                        int r_id, d_id, sx, sy, ex, ey, fare;
-                        if (sscanf(line, "TRIP %d %d %d %d %d %d %d", &r_id, &d_id, &sx, &sy, &ex, &ey, &fare) == 7) {
-                            total_revenue += fare;
-                            total_trips++;
-                        }
-                    }
-                    printf("\n--- Finance Report ---\n");
-                    printf(" Total Trips: %d\n", total_trips);
-                    printf(" Total Revenue: $%ld\n", total_revenue);
-                    fclose(fp);
                     break;
                 }
                 case 4: {
-                    /* 
-                       Tell the server to modify the users.dat file to ban 
-                       or unban a specific username.
-                    */
                     char target_user[32];
                     int new_status;
                     printf("Target Username: ");
@@ -156,20 +157,20 @@ int main() {
                     scanf("%d", &new_status);
                     
                     packet.type = MSG_ADMIN_ACTION;
-                    sprintf(packet.payload, "%s %d", target_user, new_status);
+                    snprintf(packet.payload, sizeof(packet.payload), "%s %d", target_user, new_status);
                     send(sock, &packet, sizeof(packet), 0);
                     
                     MessagePacket action_res;
                     recv(sock, &action_res, sizeof(action_res), 0);
-                    printf("Server result: %s\n", action_res.payload);
+                    printf(C_YELLOW "Server result: %s" C_RESET "\n", action_res.payload);
                     break;
                 }
                 default:
-                    printf("Invalid option.\n");
+                    printf(C_RED "Invalid option." C_RESET "\n");
             }
         }
     } else {
-        printf("Access Denied: %s\n", res.payload);
+        printf(C_RED "Access Denied: %s" C_RESET "\n", res.payload);
     }
 
     close(sock);
