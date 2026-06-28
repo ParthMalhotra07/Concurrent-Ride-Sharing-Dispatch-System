@@ -6,8 +6,7 @@
 #include <semaphore.h>
 
 /* 
-   I define some constants here for the shared memory names and the max 
-   number of drivers I want to handle in the grid.
+   Constants defining shared memory identifiers, sizes, and driver limits.
 */
 #define MAX_DRIVERS 100
 #define MAX_USERS 2000
@@ -17,8 +16,7 @@
 #define SHM_SIZE (sizeof(SystemGridMap))
 
 /* 
-   The different types of messages that the clients and server send to each other.
-   This helps us know what to do with the data in the payload.
+   Message types sent between the clients and the central server to categorize payload data.
 */
 typedef enum {
     MSG_AUTH_REQ, 
@@ -41,8 +39,7 @@ typedef enum {
 } MessageType;
 
 /* 
-   The packet structure for every socket message. 
-   I just use a fixed size payload to keep things simple for this project.
+   Socket packet structure containing a type field and a fixed-size payload buffer.
 */
 typedef struct {
     MessageType type;
@@ -50,12 +47,12 @@ typedef struct {
 } MessagePacket;
 
 /* 
-   Roles for different types of users in my system.
+   User roles specifying rider, driver, or admin privileges.
 */
 typedef enum { ROLE_RIDER = 0, ROLE_DRIVER = 1, ROLE_ADMIN = 2 } UserRole;
 
 /* 
-   Basic info for a user that I read from the database.
+   User record format parsed from database files.
 */
 typedef struct {
     int user_id;
@@ -66,7 +63,7 @@ typedef struct {
 } UserRecord;
 
 /* 
-   Simple x,y coordinates for locations on the grid.
+   Coordinates representing a position on the system grid.
 */
 typedef struct {
     int x;
@@ -74,12 +71,12 @@ typedef struct {
 } Location;
 
 /* 
-   The current state of a driver (if they are online, busy, etc.)
+   Status indicating driver availability.
 */
 typedef enum { STATUS_OFFLINE = 0, STATUS_AVAILABLE = 1, STATUS_ON_TRIP = 2 } DriverStatus;
 
 /* 
-   This is what I store in the shared memory grid for each driver.
+   State representation of a driver tracked inside the shared memory grid.
 */
 typedef struct {
     int driver_id;
@@ -88,14 +85,14 @@ typedef struct {
 } SharedDriverState;
 
 /* 
-   The full map of all drivers stored in the shared memory segment.
+   Grid mapping containing location and status information for all registered drivers.
 */
 typedef struct {
     SharedDriverState grid[MAX_DRIVERS]; 
 } SystemGridMap;
 
 /* 
-   Used for communicating the surge price multiplier between processes.
+   State representation of the dynamic demand-based surge price multiplier.
 */
 typedef struct {
     double multiplier;
