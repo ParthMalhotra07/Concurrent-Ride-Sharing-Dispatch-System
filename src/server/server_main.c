@@ -36,15 +36,51 @@ typedef struct {
     int rider_id;
     int status; // 0 = pending, 1 = accepted, 2 = rejected
     int in_use;
+    pthread_cond_t cond;
+    pthread_mutex_t mutex;
 } ActiveOffer;
 
 ActiveOffer active_offers[MAX_ACTIVE_OFFERS];
 pthread_mutex_t offers_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+static FILE* open_trip_ledger_locked(int lock_type) {
+    FILE *fp = fopen(TRIP_HISTORY_FILE, "r");
+    if (!fp) return NULL;
+    
+    int fd = fileno(fp);
+    struct flock lock;
+    memset(&lock, 0, sizeof(lock));
+    lock.l_type = lock_type;
+    lock.l_whence = SEEK_SET;
+    lock.l_start = 0;
+    lock.l_len = 0;
+    
+    if (fcntl(fd, F_SETLKW, &lock) == -1) {
+        fclose(fp);
+        return NULL;
+    }
+    return fp;
+}
+
+static void close_trip_ledger(FILE* fp) {
+    if (!fp) return;
+    int fd = fileno(fp);
+    struct flock lock;
+    memset(&lock, 0, sizeof(lock));
+    lock.l_type = F_UNLCK;
+    lock.l_whence = SEEK_SET;
+    lock.l_start = 0;
+    lock.l_len = 0;
+    fcntl(fd, F_SETLK, &lock);
+    fclose(fp);
+}
+
 void init_offers() {
     for (int i = 0; i < MAX_ACTIVE_OFFERS; i++) {
         active_offers[i].in_use = 0;
         active_offers[i].status = 0;
+        pthread_cond_init(&active_offers[i].cond, NULL);
+        pthread_mutex_init(&active_offers[i].mutex, NULL);
     }
 }
 
@@ -88,12 +124,25 @@ void log_trip(int rider_id, int driver_id, int sx, int sy, int dx, int dy, int f
 void update_driver_status(int driver_id, DriverStatus status, int x, int y) {
     pthread_mutex_lock(&driver_mutex);
     int driver_index = -1;
+    
+    // First pass: scan for existing slot where driver_id matches
     for (int i = 0; i < MAX_DRIVERS; i++) {
-        if (grid_shm->grid[i].driver_id == driver_id || grid_shm->grid[i].status == STATUS_OFFLINE) {
-            driver_index = i; 
+        if (grid_shm->grid[i].driver_id == driver_id) {
+            driver_index = i;
             break;
         }
     }
+    
+    // Second pass: if not found, scan again for a STATUS_OFFLINE slot to assign
+    if (driver_index == -1) {
+        for (int i = 0; i < MAX_DRIVERS; i++) {
+            if (grid_shm->grid[i].status == STATUS_OFFLINE) {
+                driver_index = i;
+                break;
+            }
+        }
+    }
+    
     if (driver_index != -1) {
         DriverStatus old_status = grid_shm->grid[driver_index].status;
         grid_shm->grid[driver_index].driver_id = driver_id;
@@ -230,19 +279,18 @@ void handle_ride_request(int client_sock, MessagePacket* packet, UserRecord* cur
             snprintf(packet->payload, sizeof(packet->payload), "%d %d %d %d", sx, sy, dx, dy);
             send(driver_sock, packet, sizeof(MessagePacket), 0);
             
-            // Wait for response using a low-overhead polling loop with usleep
-            int timeout_ms = 10000; // 10 seconds timeout
-            int driver_response = 0;
-            while (timeout_ms > 0) {
-                pthread_mutex_lock(&offers_mutex);
-                driver_response = active_offers[offer_slot].status;
-                pthread_mutex_unlock(&offers_mutex);
-                
-                if (driver_response != 0) break;
-                
-                usleep(50000); // Sleep for 50ms (extremely low CPU usage)
-                timeout_ms -= 50;
+            // Wait for response using POSIX Condition Variables
+            pthread_mutex_lock(&active_offers[offer_slot].mutex);
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_sec += 10; // 10 seconds timeout
+            
+            int cv_res = 0;
+            while (active_offers[offer_slot].status == 0 && cv_res == 0) {
+                cv_res = pthread_cond_timedwait(&active_offers[offer_slot].cond, &active_offers[offer_slot].mutex, &ts);
             }
+            int driver_response = active_offers[offer_slot].status;
+            pthread_mutex_unlock(&active_offers[offer_slot].mutex);
             
             // Cleanup slot under offers_mutex
             pthread_mutex_lock(&offers_mutex);
@@ -297,7 +345,10 @@ void process_driver_response(int driver_id, int status) {
     pthread_mutex_lock(&offers_mutex);
     for (int i = 0; i < MAX_ACTIVE_OFFERS; i++) {
         if (active_offers[i].in_use && active_offers[i].driver_id == driver_id) {
+            pthread_mutex_lock(&active_offers[i].mutex);
             active_offers[i].status = status; // 1 = accept, 2 = reject
+            pthread_cond_signal(&active_offers[i].cond);
+            pthread_mutex_unlock(&active_offers[i].mutex);
             break;
         }
     }
@@ -305,19 +356,12 @@ void process_driver_response(int driver_id, int status) {
 }
 
 void handle_trip_history_req(int client_sock, MessagePacket* packet, UserRecord* current_user) {
-    FILE *fp = fopen("data/trip_history.txt", "r");
+    FILE *fp = open_trip_ledger_locked(F_RDLCK);
     if (!fp) {
         packet->type = MSG_TRIP_HISTORY_END;
         send(client_sock, packet, sizeof(MessagePacket), 0);
         return;
     }
-    
-    // Acquire Advisory Read Lock
-    int fd = fileno(fp);
-    struct flock lock;
-    memset(&lock, 0, sizeof(lock));
-    lock.l_type = F_RDLCK;
-    fcntl(fd, F_SETLKW, &lock);
     
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
@@ -337,27 +381,18 @@ void handle_trip_history_req(int client_sock, MessagePacket* packet, UserRecord*
         }
     }
     
-    // Release Lock
-    lock.l_type = F_UNLCK;
-    fcntl(fd, F_SETLK, &lock);
-    fclose(fp);
+    close_trip_ledger(fp);
     
     packet->type = MSG_TRIP_HISTORY_END;
     send(client_sock, packet, sizeof(MessagePacket), 0);
 }
 
 void handle_revenue_req(int client_sock, MessagePacket* packet) {
-    FILE *fp = fopen("data/trip_history.txt", "r");
+    FILE *fp = open_trip_ledger_locked(F_RDLCK);
     long total_revenue = 0;
     int total_trips = 0;
     
     if (fp) {
-        int fd = fileno(fp);
-        struct flock lock;
-        memset(&lock, 0, sizeof(lock));
-        lock.l_type = F_RDLCK;
-        fcntl(fd, F_SETLKW, &lock);
-        
         char line[256];
         while (fgets(line, sizeof(line), fp)) {
             int r_id, d_id, sx, sy, ex, ey, fare;
@@ -366,9 +401,7 @@ void handle_revenue_req(int client_sock, MessagePacket* packet) {
                 total_trips++;
             }
         }
-        lock.l_type = F_UNLCK;
-        fcntl(fd, F_SETLK, &lock);
-        fclose(fp);
+        close_trip_ledger(fp);
     }
     
     packet->type = MSG_REVENUE_REPORT_RES;
@@ -380,15 +413,15 @@ void handle_admin_action(int client_sock, MessagePacket* packet) {
     char target[32]; 
     int status;
     if (sscanf(packet->payload, "%31s %d", target, &status) == 2) {
-        int fd = open("data/users.dat", O_RDWR);
-        if (fd == -1) return;
+        int lock_fd = open("data/users.dat", O_WRONLY);
+        if (lock_fd == -1) return;
         
         struct flock lock; 
         memset(&lock, 0, sizeof(lock));
         lock.l_type = F_WRLCK; 
-        fcntl(fd, F_SETLKW, &lock);
+        fcntl(lock_fd, F_SETLKW, &lock);
         
-        FILE *fp = fdopen(fd, "r"); 
+        FILE *fp = fopen("data/users.dat", "r"); 
         FILE *ftemp = fopen("data/users_temp.dat", "w");
         if (fp && ftemp) {
             char line[256]; 
@@ -404,6 +437,7 @@ void handle_admin_action(int client_sock, MessagePacket* packet) {
                 }
             }
             fclose(ftemp);
+            fclose(fp);
             if (found) {
                 rename("data/users_temp.dat", "data/users.dat");
                 packet->type = MSG_ADMIN_ACTION; 
@@ -413,10 +447,13 @@ void handle_admin_action(int client_sock, MessagePacket* packet) {
                 packet->type = MSG_ERROR; 
                 strncpy(packet->payload, "Could not find that user.", 255); 
             }
+        } else {
+            if (fp) fclose(fp);
+            if (ftemp) fclose(ftemp);
         }
         lock.l_type = F_UNLCK; 
-        fcntl(fd, F_SETLK, &lock); 
-        fclose(fp);
+        fcntl(lock_fd, F_SETLK, &lock); 
+        close(lock_fd);
         send(client_sock, packet, sizeof(MessagePacket), 0);
     }
 }
@@ -428,6 +465,11 @@ void cleanup_and_exit(int sig) {
     shm_unlink(SHM_NAME); 
     shm_unlink(SURGE_SHM_NAME);
     sem_unlink(SEM_POOL_NAME); 
+    
+    for (int i = 0; i < MAX_ACTIVE_OFFERS; i++) {
+        pthread_cond_destroy(&active_offers[i].cond);
+        pthread_mutex_destroy(&active_offers[i].mutex);
+    }
     exit(0);
 }
 
