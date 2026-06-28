@@ -29,7 +29,7 @@ This project serves as a showcase of deep system-level programming and Operating
 The system handles the following race conditions and deadlock scenarios explicitly:
 
 | Mechanism | Protects Against |
-| :--- | :--- |
+|---|---|
 | `session_mutex` on `user_sockets[]` | Concurrent login from two clients with the same credentials |
 | `driver_mutex` on `grid_shm` | Grid corruption from simultaneous rider threads reading and writing driver state |
 | Semaphore + `old_status` guard in `update_driver_status` | Semaphore count drifting above actual available drivers |
@@ -38,10 +38,10 @@ The system handles the following race conditions and deadlock scenarios explicit
 | `pthread_cond_timedwait` 10s timeout | Rider thread sleeping forever if driver disconnects mid-offer |
 | No nested top-level mutexes (`session_mutex`, `driver_mutex`, `offers_mutex` never held simultaneously) | Classic AB-BA deadlock |
 | Consistent lock nesting order in `process_driver_response` (`offers_mutex` always wraps slot mutex) | Nested lock deadlock |
-| `fcntl` `F_RDLCK` / `F_WRLCK` on trip ledger | Dirty reads and partial write visibility on concurrent trip logging |
-| `fcntl` `F_WRLCK` on `users.dat` in admin action | Lost update when two admin operations run concurrently |
+| `fcntl F_RDLCK` / `F_WRLCK` on trip ledger | Dirty reads and partial write visibility on concurrent trip logging |
+| `fcntl F_WRLCK` on `users.dat` in admin action | Lost update when two admin operations run concurrently |
 | `terminate_user_session()` called on abrupt disconnect | Ghost driver remaining `STATUS_AVAILABLE` in grid after client crash |
-| `shm_unlink` / `sem_unlink` in `SIGINT` handler | Stale IPC resources causing incorrect semaphore count on server restart |
+| `shm_unlink` / `sem_unlink` in SIGINT handler | Stale IPC resources causing incorrect semaphore count on server restart |
 | `earnings_mutex` + `earnings_cond` in driver client | Earnings display terminating before all history packets are received |
 
 ## System Architecture
