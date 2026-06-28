@@ -7,7 +7,7 @@
 
 A high-performance, multi-threaded ride-sharing dispatch server (simulating Uber/Ola algorithms) built in C. This system acts as a centralized matchmaker, seamlessly connecting Riders and Drivers in real-time over TCP sockets while maintaining absolute data integrity in a highly concurrent environment.
 
-## 🚀 Key Operating System Concepts Demonstrated
+## Key Operating System Concepts Demonstrated
 
 This project serves as a showcase of deep system-level programming and Operating Systems synchronization primitives:
 
@@ -24,7 +24,7 @@ This project serves as a showcase of deep system-level programming and Operating
 6. **Thread Safety & Vulnerability Prevention**: 
    - Extensive bounds checking and `snprintf`/`strncpy` usage prevents buffer overflows and segmentation faults on malformed packets. Secure session management prevents descriptor leaks on abrupt disconnects.
 
-## 🧠 System Architecture
+## System Architecture
 
 ```mermaid
 graph TD
@@ -67,7 +67,7 @@ graph TD
     DB_Gate <-->|fcntl Locks| U
 ```
 
-## 🛠️ Build and Execution
+## Build and Execution
 
 **Prerequisites:** A POSIX-compliant OS (Linux, macOS, or WSL on Windows) with `gcc` and `make`.
 
@@ -96,7 +96,7 @@ graph TD
    ./bin/admin    # Login as admin1
    ```
 
-## 🛡️ Concurrency Safety Mechanisms
+## Concurrency Safety Mechanisms
 
 - **Deadlock Prevention**: Strict lock ordering is enforced. No nested locking occurs across multiple mutexes (e.g., `session_mutex` and `offers_mutex`).
 - **Resource Reclaiming**: Worker threads are spun up using `pthread_detach()` so kernel resources are immediately reclaimed on user logout.
