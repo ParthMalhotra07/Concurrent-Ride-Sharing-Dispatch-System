@@ -12,7 +12,7 @@ A high-performance, multi-threaded ride-sharing dispatch server (simulating Uber
 This project serves as a showcase of deep system-level programming and Operating Systems synchronization primitives:
 
 1. **POSIX Condition Variables (`pthread_cond_t`) & Mutexes**: 
-   - Eliminates CPU-wasting spinlocks. When a Rider requests a ride, their thread goes to sleep on a Condition Variable. The OS instantly wakes the thread the millisecond the Driver responds, enabling ultra-low latency matchmaking without deadlocks.
+   Each active ride offer slot embeds its own pthread_cond_t and pthread_mutex_t. When a rider requests a ride, their worker thread blocks on pthread_cond_timedwait with a 10-second timeout — genuinely sleeping with zero CPU usage. The moment a driver accepts or rejects, process_driver_response() locks the slot's mutex, updates the status, and calls pthread_cond_signal() to wake the rider thread instantly. The timeout guarantees the rider thread always recovers if a driver disconnects mid-offer, preventing indefinite starvation.
 2. **True Distributed Socket Architecture (`<sys/socket.h>`)**: 
    - Clients (Riders, Drivers, Admins) never touch the database files. They stream data over custom binary TCP packets. The server parses chunked requests and streams historical ledger data back.
 3. **Shared Memory IPC (`shm_open`, `mmap`)**: 
@@ -23,6 +23,26 @@ This project serves as a showcase of deep system-level programming and Operating
    - Prevents "Dirty Reads" and "Lost Updates" by enforcing strict Reader-Writer locks (`F_RDLCK` and `F_WRLCK`) on the central trip ledger and user databases.
 6. **Thread Safety & Vulnerability Prevention**: 
    - Extensive bounds checking and `snprintf`/`strncpy` usage prevents buffer overflows and segmentation faults on malformed packets. Secure session management prevents descriptor leaks on abrupt disconnects.
+
+## Concurrency Correctness
+
+The system handles the following race conditions and deadlock scenarios explicitly:
+
+| Mechanism | Protects Against |
+| :--- | :--- |
+| `session_mutex` on `user_sockets[]` | Concurrent login from two clients with the same credentials |
+| `driver_mutex` on `grid_shm` | Grid corruption from simultaneous rider threads reading and writing driver state |
+| Semaphore + `old_status` guard in `update_driver_status` | Semaphore count drifting above actual available drivers |
+| `offers_mutex` on `active_offers[]` | Two rider threads claiming the same offer slot simultaneously |
+| Per-slot `pthread_cond_t` + `pthread_mutex_t` | Data race on offer status between rider and driver threads |
+| `pthread_cond_timedwait` 10s timeout | Rider thread sleeping forever if driver disconnects mid-offer |
+| No nested top-level mutexes (`session_mutex`, `driver_mutex`, `offers_mutex` never held simultaneously) | Classic AB-BA deadlock |
+| Consistent lock nesting order in `process_driver_response` (`offers_mutex` always wraps slot mutex) | Nested lock deadlock |
+| `fcntl` `F_RDLCK` / `F_WRLCK` on trip ledger | Dirty reads and partial write visibility on concurrent trip logging |
+| `fcntl` `F_WRLCK` on `users.dat` in admin action | Lost update when two admin operations run concurrently |
+| `terminate_user_session()` called on abrupt disconnect | Ghost driver remaining `STATUS_AVAILABLE` in grid after client crash |
+| `shm_unlink` / `sem_unlink` in `SIGINT` handler | Stale IPC resources causing incorrect semaphore count on server restart |
+| `earnings_mutex` + `earnings_cond` in driver client | Earnings display terminating before all history packets are received |
 
 ## System Architecture
 
