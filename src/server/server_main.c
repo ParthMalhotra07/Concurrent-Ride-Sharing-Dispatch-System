@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/socket.h>
@@ -28,14 +30,12 @@ static sem_t* driver_pool_sem = NULL;
 // Bounded arrays to prevent buffer overflows
 int user_sockets[MAX_USERS] = {0};
 
-// Condition variables and structure for tracking active ride offers
+// Structure for tracking active ride offers
 typedef struct {
     int driver_id;
     int rider_id;
     int status; // 0 = pending, 1 = accepted, 2 = rejected
     int in_use;
-    pthread_cond_t cond;
-    pthread_mutex_t mutex;
 } ActiveOffer;
 
 ActiveOffer active_offers[MAX_ACTIVE_OFFERS];
@@ -44,8 +44,7 @@ pthread_mutex_t offers_mutex = PTHREAD_MUTEX_INITIALIZER;
 void init_offers() {
     for (int i = 0; i < MAX_ACTIVE_OFFERS; i++) {
         active_offers[i].in_use = 0;
-        pthread_cond_init(&active_offers[i].cond, NULL);
-        pthread_mutex_init(&active_offers[i].mutex, NULL);
+        active_offers[i].status = 0;
     }
 }
 
@@ -231,20 +230,21 @@ void handle_ride_request(int client_sock, MessagePacket* packet, UserRecord* cur
             snprintf(packet->payload, sizeof(packet->payload), "%d %d %d %d", sx, sy, dx, dy);
             send(driver_sock, packet, sizeof(MessagePacket), 0);
             
-            // Wait for response using CV instead of CPU-wasting spinlock
-            pthread_mutex_lock(&active_offers[offer_slot].mutex);
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_sec += 10; // 10 seconds timeout
-            
-            int cv_res = 0;
-            while (active_offers[offer_slot].status == 0 && cv_res == 0) {
-                cv_res = pthread_cond_timedwait(&active_offers[offer_slot].cond, &active_offers[offer_slot].mutex, &ts);
+            // Wait for response using a low-overhead polling loop with usleep
+            int timeout_ms = 10000; // 10 seconds timeout
+            int driver_response = 0;
+            while (timeout_ms > 0) {
+                pthread_mutex_lock(&offers_mutex);
+                driver_response = active_offers[offer_slot].status;
+                pthread_mutex_unlock(&offers_mutex);
+                
+                if (driver_response != 0) break;
+                
+                usleep(50000); // Sleep for 50ms (extremely low CPU usage)
+                timeout_ms -= 50;
             }
-            int driver_response = active_offers[offer_slot].status;
-            pthread_mutex_unlock(&active_offers[offer_slot].mutex);
             
-            // Cleanup offer slot
+            // Cleanup slot under offers_mutex
             pthread_mutex_lock(&offers_mutex);
             active_offers[offer_slot].in_use = 0;
             pthread_mutex_unlock(&offers_mutex);
@@ -272,6 +272,18 @@ void handle_ride_request(int client_sock, MessagePacket* packet, UserRecord* cur
                 int final_fare = (int)(base_fare * surge);
                 log_trip(current_user->user_id, driver_id, sx, sy, dx, dy, final_fare);
                 update_driver_status(driver_id, STATUS_AVAILABLE, dx, dy);
+
+                // Notify the driver client that the trip is complete and sync location
+                pthread_mutex_lock(&session_mutex);
+                int driver_sock = user_sockets[driver_id];
+                pthread_mutex_unlock(&session_mutex);
+                if (driver_sock != 0) {
+                    MessagePacket sync_pkt;
+                    sync_pkt.type = MSG_TRIP_COMPLETED;
+                    snprintf(sync_pkt.payload, sizeof(sync_pkt.payload), "%d %d", dx, dy);
+                    send(driver_sock, &sync_pkt, sizeof(MessagePacket), 0);
+                }
+
                 printf("Trip complete for Rider %d. Fare: $%d\n", current_user->user_id, final_fare);
             } else {
                 update_driver_status(driver_id, STATUS_AVAILABLE, sx, sy);
@@ -285,10 +297,7 @@ void process_driver_response(int driver_id, int status) {
     pthread_mutex_lock(&offers_mutex);
     for (int i = 0; i < MAX_ACTIVE_OFFERS; i++) {
         if (active_offers[i].in_use && active_offers[i].driver_id == driver_id) {
-            pthread_mutex_lock(&active_offers[i].mutex);
             active_offers[i].status = status; // 1 = accept, 2 = reject
-            pthread_cond_signal(&active_offers[i].cond);
-            pthread_mutex_unlock(&active_offers[i].mutex);
             break;
         }
     }
@@ -417,6 +426,7 @@ void cleanup_and_exit(int sig) {
     printf("\nStopping server and cleaning up IPC resources...\n");
     if (grid_shm) munmap(grid_shm, SHM_SIZE);
     shm_unlink(SHM_NAME); 
+    shm_unlink(SURGE_SHM_NAME);
     sem_unlink(SEM_POOL_NAME); 
     exit(0);
 }
@@ -439,6 +449,15 @@ void setup_ipc() {
     init_offers();
 }
 
+void terminate_user_session(UserRecord* user) {
+    pthread_mutex_lock(&session_mutex);
+    user_sockets[user->user_id] = 0;
+    pthread_mutex_unlock(&session_mutex);
+    if (user->role == ROLE_DRIVER) {
+        update_driver_status(user->user_id, STATUS_OFFLINE, 0, 0);
+    }
+}
+
 void* handle_client(void* arg) {
     int client_sock = *(int*)arg; 
     free(arg);
@@ -452,12 +471,7 @@ void* handle_client(void* arg) {
             // FIX: Session Leakage Fix! We must clear the socket from the array on disconnect
             if (authenticated) {
                 printf("User %s (ID: %d) connection lost.\n", current_user.username, current_user.user_id);
-                pthread_mutex_lock(&session_mutex);
-                user_sockets[current_user.user_id] = 0;
-                pthread_mutex_unlock(&session_mutex);
-                if (current_user.role == ROLE_DRIVER) {
-                    update_driver_status(current_user.user_id, STATUS_OFFLINE, 0, 0);
-                }
+                terminate_user_session(&current_user);
             } else {
                 printf("Client on socket %d disconnected.\n", client_sock);
             }
@@ -474,12 +488,7 @@ void* handle_client(void* arg) {
             switch(packet.type) {
                 case MSG_DISCONNECT:
                     printf("User %s (ID: %d) requested logout.\n", current_user.username, current_user.user_id);
-                    pthread_mutex_lock(&session_mutex); 
-                    user_sockets[current_user.user_id] = 0; 
-                    pthread_mutex_unlock(&session_mutex);
-                    if (current_user.role == ROLE_DRIVER) {
-                        update_driver_status(current_user.user_id, STATUS_OFFLINE, 0, 0);
-                    }
+                    terminate_user_session(&current_user);
                     goto cleanup;
                 case MSG_LOC_UPDATE:
                     if (current_user.role == ROLE_DRIVER) {
@@ -534,6 +543,7 @@ cleanup:
 
 int main() {
     signal(SIGINT, cleanup_and_exit); 
+    signal(SIGTERM, cleanup_and_exit); 
     setup_ipc();
     
     int server_sock = socket(AF_INET, SOCK_STREAM, 0);
